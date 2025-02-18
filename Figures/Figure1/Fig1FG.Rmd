@@ -1,0 +1,105 @@
+---
+title: "Fig1FG"
+author: "N. Alcala"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Figure 1 panels F and G
+
+This document produces pannels F and G from Figure 1 from the lungNENomics manuscript.
+
+## Panel F
+
+### Load libraries
+
+```{r pressure, echo=FALSE}
+library(tidyverse)
+library(FSTruct)
+library(patchwork)
+```
+
+### Load data
+We first load the clinical data from Table S1
+
+```{r}
+var_cli = read_tsv("/home/alcalan/lungNENomics/var_cli_09052024.tsv")
+```
+
+We get quantiseq results from the quantiseq pipeline run with the official docker container (see pipeline at https://github.com/IARCbioinfo/quantiseq-nf)
+
+```{r}
+quantiseq = read_csv("/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/quanTIseq_matrix_PCA_LCNEC_SCLC_ITH_TR.csv")[,-1]
+quantiseq = left_join(quantiseq,var_cli%>% dplyr::select(sample_id,group))
+colnames(quantiseq)[2:12] = c( "B cell","Macrophage M1","Macrophage M2","Monocyte","Neutrophil","NK cell","T cell CD4+ (non-regulatory)", 
+                               "T cell CD8+","T cell regulatory (Tregs)","Myeloid dendritic cell","uncharacterized cell")
+
+# normalize immune cells to sum to 1
+quantiseq.norm = quantiseq[,c(1:11,13)]
+quantiseq.norm[,2:11] = sweep(quantiseq.norm[,2:11],1,rowSums(quantiseq.norm[,2:11]),"/")
+
+quantiseq.long = quantiseq.norm %>% pivot_longer(cols = `B cell`:`Myeloid dendritic cell`,names_to = "Cell type",values_to = "Proportion")
+```
+
+### Plot cell type compositions
+We define colors for the  Cell types
+```{r}
+cell11 <- c("Myeloid dendritic cell"="#882E72","Monocyte"="#1965B0","Macrophage M2"="#5289C7","Macrophage M1"="#7BAFDE",
+            "Neutrophil"="#4EB265","NK cell"="#CAE0AB","T cell CD4+ (non-regulatory)"="#F7F056","T cell CD8+"="#F4A736",
+            "B cell"="#E8601C","T cell regulatory (Tregs)"="#DC050C","uncharacterized cell"="#72190E")
+```
+
+```{r}
+Im.plot = ggplot(quantiseq.long, aes(x=group,y=value,fill=name)) + geom_bar(position = "stack", stat = "identity", width = 1) + 
+  theme_void() + ylab("") + theme(legend.position = "none") + facet_grid(.~group,scales = "free_x") + scale_fill_manual(values=cell11)
+
+quantiseq.long.mean = quantiseq.long %>% group_by(group,`Cell type`) %>% summarize(Mean_prop = mean(Proportion))
+
+# find max number of samples to scale all plots
+nmax = max(table(quantiseq$group))
+
+# A1 plot
+# reorder names 
+quantiseq.long$`Cell type` <- factor(as.character(quantiseq.long$`Cell type`), levels = quantiseq.long.mean %>% filter(group=="Ca A1") %>% arrange(-Mean_prop) %>% pull(`Cell type`) %>% rev())
+quantiseq.long$sample_id   <- factor(as.character(quantiseq.long$sample_id), levels = quantiseq.long %>% arrange(`Cell type`,Proportion) %>% pull(sample_id) %>% rev() %>% unique() %>% rev())
+
+Fig1F_A1 <- ggplot(quantiseq.long %>% filter(group=="Ca A1"), aes(fill = `Cell type`, color = `Cell type`, y = Proportion, x = sample_id)) + 
+    geom_bar(position = "stack", stat = "identity", width = 1) + theme_void() + scale_fill_manual(values=cell11) + scale_color_manual(values=cell11) + coord_cartesian(xlim=c(0,nmax)) +
+    theme(legend.position = "none")
+
+# A2 plot
+# reorder names 
+quantiseq.long$`Cell type` <- factor(as.character(quantiseq.long$`Cell type`), levels = quantiseq.long.mean %>% filter(group=="Ca A2") %>% arrange(-Mean_prop) %>% pull(`Cell type`) %>% rev())
+quantiseq.long$sample_id <- factor(as.character(quantiseq.long$sample_id), levels = quantiseq.long %>% arrange(`Cell type`,Proportion) %>% pull(sample_id) %>% rev() %>% unique() %>% rev())
+
+Fig1F_A2 <- ggplot(quantiseq.long %>% filter(group=="Ca A2"), aes(fill = `Cell type`, color = `Cell type`, y = Proportion, x = sample_id)) + 
+    geom_bar(position = "stack", stat = "identity", width = 1) + theme_void() + scale_fill_manual(values=cell11) + scale_color_manual(values=cell11) + coord_cartesian(xlim=c(0,nmax)) +
+    theme(legend.position = "none")
+
+# B plot
+# reorder names 
+quantiseq.long$`Cell type` <- factor(as.character(quantiseq.long$`Cell type`), levels = quantiseq.long.mean %>% filter(group=="Ca B") %>% arrange(-Mean_prop) %>% pull(`Cell type`) %>% rev())
+quantiseq.long$sample_id <- factor(as.character(quantiseq.long$sample_id), levels = quantiseq.long %>% arrange(`Cell type`,Proportion) %>% pull(sample_id) %>% rev()%>% unique() %>% rev())
+
+Fig1F_B <- ggplot(quantiseq.long %>% filter(group=="Ca B"), aes(fill = `Cell type`, color = `Cell type`, y = Proportion, x = sample_id)) + 
+    geom_bar(position = "stack", stat = "identity", width = 1) + theme_void() + scale_fill_manual(values=cell11) + scale_color_manual(values=cell11) + coord_cartesian(xlim=c(0,nmax)) +
+    theme(legend.position = "none")
+
+# supra-ca plot
+# reorder names 
+quantiseq.long$`Cell type` <- factor(as.character(quantiseq.long$`Cell type`), levels = quantiseq.long.mean %>% filter(group=="sc-enriched") %>% arrange(-Mean_prop) %>% pull(`Cell type`) %>% rev())
+quantiseq.long$sample_id <- factor(as.character(quantiseq.long$sample_id), levels = quantiseq.long %>% arrange(`Cell type`,Proportion) %>% pull(sample_id) %>% rev() %>% unique() %>% rev())
+
+Fig1F_sce <- ggplot(quantiseq.long %>% filter(group=="sc-enriched"), aes(fill = `Cell type`, color = `Cell type`, y = Proportion, x = sample_id)) + 
+    geom_bar(position = "stack", stat = "identity", width = 1) + theme_void() + scale_fill_manual(values=cell11) + scale_color_manual(values=cell11) + coord_cartesian(xlim=c(0,nmax)) +
+    theme(legend.position = "none")
+
+Fig1F_A1 + Fig1F_A2 + Fig1F_B + Fig1F_sce
+
+ggsave(filename="Fig1F_raw.svg",Fig1F_A1 + Fig1F_A2 + Fig1F_B + Fig1F_sce,width=2.5*2,height=2.5*2)
+
+```
