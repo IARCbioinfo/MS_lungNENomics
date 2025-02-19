@@ -9,19 +9,225 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Figure 1 panels F and G
+# Figure 1 panels F and G (and associated supplementary figures): immune cell analysis from bulk RNA-seq data 
 
-This document produces pannels F and G from Figure 1 from the lungNENomics manuscript.
-
-## Panel F
+This document produces pannels F and G from Figure 1 from the lungNENomics manuscript, which provide immune cell analyses from bulk RNA-seq data, as well as their associated supplementary figures.
 
 ### Load libraries
 
 ```{r pressure, echo=FALSE}
 library(tidyverse)
-library(FSTruct)
 library(patchwork)
+library(SummarizedExperiment)
 ```
+
+###  Extended Data Figure 1C: immune archetypes
+
+We compute the immune archetypes following the precedure from Combes et al. Cell 2019. Note that since this is a pan-cancer signature, each archetype is defined relative to other tumors, thus we use other lung data from the TCGA, that we have reprocessed internally to avoid batch effects (see methods from the manuscript).
+
+### Data preparation
+We load the metadata
+```{r}
+Attributes = read_tsv(unzip('../../Data/GabrielEtAl2020/Attributes.txt.zip')[1])
+
+load("/data/lungNENomics/work/Descriptive_manuscript_data/MOFA/MOFA.Exp.Meth.Alt.CNV_lungNENomicsCombined/ParetoTI/variables_archetypes_MOFA_LNET.RData") # data also contained in Table S1
+gigascience_attributes = read_tsv("/data/lungNENomics/work/SextonoatesA/Attributes.txt")
+var_LNET$sample_id = as.character(var_LNET$sample_id)
+var_LNET$group = var_LNET$archetype_k4_LF3_label
+
+var_cli = bind_rows(var_LNET, Attributes %>% filter(Histopathology_simplified%in%c("LCNEC","SCLC")) %>% 
+                      mutate(sample_id = Sample_ID, group=Histopathology_simplified) %>% dplyr::select(sample_id,group) )
+var_cli = bind_rows(var_cli,tibble(sample_id=c("LCNEC3T","LCNEC4T"),group="LCNEC") )
+```
+
+We load the expression data for the datasets
+```{r}
+# We load the list of marker genes for each archetype  
+immune_arc_genes = readxl::read_xlsx("../../Data/ImmuneArchetypes/immune_arc_genes.xlsx")
+
+# We load the lungNENomics data
+expr = load("/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/gene_TPM_matrix_PCA_LCNEC_SCLC_ITH_TR.RData")
+annot <- load("/data/lungNENomics/work/Descriptive_manuscript_data/gencode_hg38_v33.RData")
+gene_TPM_matrix = left_join(gene_TPM_matrix,ref.33.gene %>% dplyr::select(gene_id,gene_name) ) %>% relocate(gene_name , .after=gene_id)
+
+## also get TPM from TCGA lung cancer for reference
+load("/data/lungNENomics/files/Internal_Data_2023/RNASeq/Analyses-LungNENomics/TCGA-LUAD-Tumors-534/out_RNAseq-transcript-nf-2.2/Robjects/gene_1pass.SE.rda")
+gene_TPM_matrix.LUAD = assay(gene_1pass.SE,"abundance_TPM")
+
+load("/data/lungNENomics/files/Internal_Data_2023/RNASeq/Analyses-LungNENomics/TCGA-LUSC-Tumors-502/out_RNAseq-transcript-nf-2.2/Robjects/gene_1pass.SE.rda")
+gene_TPM_matrix.LUSC = assay(gene_1pass.SE,"abundance_TPM")
+
+rm(gene_1pass.SE)
+gc()
+```
+
+
+We merge the different expression matrices and extract the features for classification
+```{r}
+# check presence of features
+immune_arc_genes.list = unlist(immune_arc_genes)
+immune_arc_genes.list = immune_arc_genes.list[!is.na(immune_arc_genes.list)]
+
+immune_arc_genes.list[which( !immune_arc_genes.list %in% gene_TPM_matrix$gene_name )] # replace with YARS1 alias
+immune_arc_genes[immune_arc_genes=="YARS"] = "YARS1"
+
+# merge lungNENomics and TCGA datasets
+all( gene_TPM_matrix$gene_id == rownames(gene_TPM_matrix.LUAD) )
+all( gene_TPM_matrix$gene_id == rownames(gene_TPM_matrix.LUSC) )
+
+gene_TPM_matrix.LN_TCGA = bind_cols(gene_TPM_matrix,gene_TPM_matrix.LUAD,gene_TPM_matrix.LUSC)
+
+arc.features = tibble(sample = colnames(gene_TPM_matrix.LN_TCGA)[-(1:2)],
+                      Tcell.sig.TPM   = colMeans( log2((gene_TPM_matrix.LN_TCGA %>% filter(gene_name%in% immune_arc_genes$Tcell ) )[,-c(1:2)]+1) ),
+                      Myeloid.sig.TPM = colMeans( log2((gene_TPM_matrix.LN_TCGA %>% filter(gene_name%in% immune_arc_genes$Myeloid ) )[,-c(1:2)]+1 )),
+                      Stroma.sig.TPM  = colMeans( log2((gene_TPM_matrix.LN_TCGA %>% filter(gene_name%in% immune_arc_genes$Stroma ) )[,-c(1:2)]+1 ))
+                      )
+
+# convert to rank percentile per row
+arc.features.abs = arc.features
+arc.features[,-1] = apply(arc.features[,-1],2,rank)/nrow(arc.features)
+
+arc.features = left_join(arc.features , var_cli %>% dplyr::select(sample_id,group) ,
+                         by=c(sample="sample_id"))
+# add LUAD and LUSC. 497 samples, 534 LUAD, 502 LUSC => total 1533
+arc.features$group[497+1:534] = "LUAD"
+arc.features$group[497+534+1:502] = "LUSC"
+
+
+arc.features$group = factor(arc.features$group,levels=c("Ca A1","Ca A2","Ca B","sc-enriched","LCNEC","SCLC","LUAD","LUSC"))
+arc.features.df = data.frame(arc.features)
+rownames(arc.features.df) = arc.features.df$sample
+colnames(arc.features.df) = str_remove(colnames(arc.features.df),".sig.TPM")
+
+arc.features.df.long = arc.features.df %>% filter(!is.na(group)) %>% pivot_longer( cols=c(Tcell:Stroma),names_to = "Feature",values_to = "Score" ) 
+arc.features.df.long$Feature = factor(arc.features.df.long$Feature,levels=c("Tcell","Myeloid","Stroma") )
+```
+
+
+#### Clustering
+We perform UMAP following Combes et al. for vizualisation, and leiden clustering to group samples
+
+```{r}
+## 3-feature scores
+library(umap)
+umap3f = umap(arc.features.df[,2:4])
+
+leiden_clustering = function( latent_dat,knearest=100, Resolution=0.1){
+  set.seed(1234)
+  PCvalues = latent_dat
+  dim(PCvalues)
+  info.spatial = as.data.frame(PCvalues)
+  knn.norm = FNN::get.knn(as.matrix(PCvalues), k = knearest)
+  knn.norm = data.frame(from = rep(1:nrow(knn.norm$nn.index),
+                                   k=knearest), to = as.vector(knn.norm$nn.index), weight = 1/(1 + as.vector(knn.norm$nn.dist)))
+  nw.norm = igraph::graph_from_data_frame(knn.norm, directed = FALSE)
+  nw.norm = igraph::simplify(nw.norm)
+  print("Computing Leiden clusters ")
+  lc.norm = igraph::cluster_leiden(nw.norm, resolution = Resolution)
+  print("Nb leiden community")
+  clusterlabel <-  as.vector(igraph::membership(lc.norm))
+  print("Nb community after merging")
+  print(length(unique(clusterlabel)))
+  
+  return("cluster_label"=clusterlabel)
+}
+
+leiden_n100_r0.1 = leiden_clustering(arc.features.df[,2:4])
+```
+
+#### Labelling of clusters
+We first plot the clusters and their marker values
+```{r}
+ggplot(bind_cols(as_tibble(umap3f$layout),arc=arc.features.df$group,cluster=factor(leiden_n100_r0.1) ),
+       aes(x=V1,y=V2,fill=arc,fill=cluster) ) + 
+  geom_point(shape=21) + theme_classic() # 6 communities as in original paper
+
+### add clustering info 
+arc.features.df.long = bind_cols(arc.features.df,cluster=paste0("C",leiden_n100_r0.1)) %>% 
+  filter(!is.na(group)) %>% pivot_longer( cols=c(Tcell:Stroma),names_to = "Feature",values_to = "Score" ) 
+arc.features.df.long$Feature = factor(arc.features.df.long$Feature,levels=c("Tcell","Myeloid","Stroma") )
+
+ggplot( arc.features.df.long , aes(x=cluster,y=Score,fill=cluster)) + 
+  geom_violin(scale = "width") +geom_boxplot(width=0.1,fill="white") + facet_wrap(.~Feature)+ theme_classic()
+```
+Based on the plots, we identify the following correspondance:
+      T M S
+ cl5: + + + => 1. Immune stromal (90 90 80)
+ cl2: +(75) +(75) ~(50) => 2. Immune rich (80 80 35)
+ cl6: ~(50) ~(60) +(80) => 1. 4. Myeloid centric (50 60 80)
+ cl4: - - + => 5. Immune desert  (20 20 70)
+ cl3: -(30) -(25) -(30) => 6. T cell centric (45 30 40)
+ cl1: - - - => 6. Immune stroma desert (15 10 20)
+
+We rename and reorder for fig
+```{r}
+immarc6 = c(Immune_rich="red",Immune_stromal="darkgreen",T_cell_centric="darkblue",
+            Myeloid_centric="gray",Immune_desert="yellow",Immune_stroma_desert="orange")
+
+arc.features.df.long$cluster.label = NA
+arc.features.df.long$cluster.label[arc.features.df.long$cluster=="C5"] = "Immune_stromal"
+arc.features.df.long$cluster.label[arc.features.df.long$cluster=="C2"] = "Immune_rich"
+arc.features.df.long$cluster.label[arc.features.df.long$cluster=="C6"] = "Myeloid_centric"
+arc.features.df.long$cluster.label[arc.features.df.long$cluster=="C4"] = "Immune_desert"
+arc.features.df.long$cluster.label[arc.features.df.long$cluster=="C3"] = "T_cell_centric"
+arc.features.df.long$cluster.label[arc.features.df.long$cluster=="C1"] = "Immune_stroma_desert"
+arc.features.df.long$cluster.label = factor(arc.features.df.long$cluster.label,
+                                            levels=c("Immune_rich","Immune_stromal","T_cell_centric","Myeloid_centric","Immune_desert","Immune_stroma_desert"))
+
+FigS61 = ggplot( arc.features.df.long %>% filter(Feature %in% c("Tcell","Myeloid","Stroma")) , 
+        aes(x=cluster.label,y=Score,fill=cluster.label)) + geom_violin(scale = "width") +  geom_boxplot(width=0.2,fill="white")+
+  scale_fill_manual(values=immarc6) + facet_grid(.~Feature) +
+  theme_classic() + theme(axis.text.x=element_blank(),axis.ticks.x = element_blank(),axis.line.x=element_blank()) +xlab("")
+
+ggsave(filename="../../../Figures/Supplementary_Figure_S61_immune.svg",FigS61,height=2.5,width=3*2)
+ggsave(filename="../../../Figures/Supplementary_Figure_S61_immune.pdf",FigS61,height=2.5,width=3*2)
+```
+
+Save the table
+```{r}
+arc.features.df.wide = arc.features.df.long %>% pivot_wider(values_from=Score,names_from=Feature)
+
+write_csv(arc.features.df.wide,file = "/data/lungNENomics/work/alcalan/tomoveto_Descriptive_manuscript_data/RNAseq/TableS44_immune_archetypes.csv")
+```
+
+
+We quantify arc proportions in each group
+```{r}
+Immarc6.tib = arc.features.df.long %>% filter(Feature %in% c("Tcell","Myeloid","Stroma"))
+Immarc6.tib = table(Immarc6.tib$group,Immarc6.tib$cluster.label)
+Immarc6.tib = sweep(Immarc6.tib,1,rowSums(Immarc6.tib),"/")
+Immarc6.tib = as_tibble(as.data.frame(Immarc6.tib))
+colnames(Immarc6.tib)[1:2] = c("group","immune.archetype")
+
+Immarc6.tib2 = arc.features.df.long %>% filter(Feature %in% "Tcell")
+Immarc6.tib2 = table(Immarc6.tib2$group,Immarc6.tib2$cluster.label)
+
+fisher.test(Immarc6.tib2[1:4,],simulate.p.value = T)# significant differences
+fisher.test(Immarc6.tib2[1:3,],simulate.p.value = T)# significant differences between A1 A2 and B
+fisher.test(Immarc6.tib2[1:2,],simulate.p.value = T)# no diff between A1 and A2
+fisher.test(Immarc6.tib2[c(1,3),],simulate.p.value = T)# significant differences between A1 and B
+fisher.test(Immarc6.tib2[c(1,4),],simulate.p.value = T)# significant differences between A1 and SC
+fisher.test(Immarc6.tib2[c(2,3),],simulate.p.value = T)# significant differences between A2 and B
+fisher.test(Immarc6.tib2[c(2,4),],simulate.p.value = T)# significant differences between A2 and SC
+fisher.test(Immarc6.tib2[c(3,4),],simulate.p.value = T)# significant differences between A2 and SC
+```
+
+```{r}
+ggimmunearc = ggplot( Immarc6.tib  , aes(x=group,y=Freq,fill=immune.archetype)) + 
+  geom_bar(stat="identity") + 
+  theme_classic() + theme(axis.text.x = element_text(angle=90,hjust=1,vjust=0.5),axis.title.x = element_blank()) + 
+  scale_fill_manual(values=immarc6) + ylab("Proportion")
+
+ggimmunearc
+
+ggsave(ggimmunearc,filename = "Fig1F_immunearcs.svg",height=3,width=5)
+
+table(arc.features.df.long$group,arc.features.df.long$cluster.label)
+```
+
+
+
+## Panel G
 
 ### Load data
 We first load the clinical data from Table S1
@@ -67,7 +273,7 @@ nmax = max(table(quantiseq$group))
 quantiseq.long$`Cell type` <- factor(as.character(quantiseq.long$`Cell type`), levels = quantiseq.long.mean %>% filter(group=="Ca A1") %>% arrange(-Mean_prop) %>% pull(`Cell type`) %>% rev())
 quantiseq.long$sample_id   <- factor(as.character(quantiseq.long$sample_id), levels = quantiseq.long %>% arrange(`Cell type`,Proportion) %>% pull(sample_id) %>% rev() %>% unique() %>% rev())
 
-Fig1F_A1 <- ggplot(quantiseq.long %>% filter(group=="Ca A1"), aes(fill = `Cell type`, color = `Cell type`, y = Proportion, x = sample_id)) + 
+Fig1G_A1 <- ggplot(quantiseq.long %>% filter(group=="Ca A1"), aes(fill = `Cell type`, color = `Cell type`, y = Proportion, x = sample_id)) + 
     geom_bar(position = "stack", stat = "identity", width = 1) + theme_void() + scale_fill_manual(values=cell11) + scale_color_manual(values=cell11) + coord_cartesian(xlim=c(0,nmax)) +
     theme(legend.position = "none")
 
@@ -76,7 +282,7 @@ Fig1F_A1 <- ggplot(quantiseq.long %>% filter(group=="Ca A1"), aes(fill = `Cell t
 quantiseq.long$`Cell type` <- factor(as.character(quantiseq.long$`Cell type`), levels = quantiseq.long.mean %>% filter(group=="Ca A2") %>% arrange(-Mean_prop) %>% pull(`Cell type`) %>% rev())
 quantiseq.long$sample_id <- factor(as.character(quantiseq.long$sample_id), levels = quantiseq.long %>% arrange(`Cell type`,Proportion) %>% pull(sample_id) %>% rev() %>% unique() %>% rev())
 
-Fig1F_A2 <- ggplot(quantiseq.long %>% filter(group=="Ca A2"), aes(fill = `Cell type`, color = `Cell type`, y = Proportion, x = sample_id)) + 
+Fig1G_A2 <- ggplot(quantiseq.long %>% filter(group=="Ca A2"), aes(fill = `Cell type`, color = `Cell type`, y = Proportion, x = sample_id)) + 
     geom_bar(position = "stack", stat = "identity", width = 1) + theme_void() + scale_fill_manual(values=cell11) + scale_color_manual(values=cell11) + coord_cartesian(xlim=c(0,nmax)) +
     theme(legend.position = "none")
 
@@ -85,7 +291,7 @@ Fig1F_A2 <- ggplot(quantiseq.long %>% filter(group=="Ca A2"), aes(fill = `Cell t
 quantiseq.long$`Cell type` <- factor(as.character(quantiseq.long$`Cell type`), levels = quantiseq.long.mean %>% filter(group=="Ca B") %>% arrange(-Mean_prop) %>% pull(`Cell type`) %>% rev())
 quantiseq.long$sample_id <- factor(as.character(quantiseq.long$sample_id), levels = quantiseq.long %>% arrange(`Cell type`,Proportion) %>% pull(sample_id) %>% rev()%>% unique() %>% rev())
 
-Fig1F_B <- ggplot(quantiseq.long %>% filter(group=="Ca B"), aes(fill = `Cell type`, color = `Cell type`, y = Proportion, x = sample_id)) + 
+Fig1G_B <- ggplot(quantiseq.long %>% filter(group=="Ca B"), aes(fill = `Cell type`, color = `Cell type`, y = Proportion, x = sample_id)) + 
     geom_bar(position = "stack", stat = "identity", width = 1) + theme_void() + scale_fill_manual(values=cell11) + scale_color_manual(values=cell11) + coord_cartesian(xlim=c(0,nmax)) +
     theme(legend.position = "none")
 
@@ -94,12 +300,12 @@ Fig1F_B <- ggplot(quantiseq.long %>% filter(group=="Ca B"), aes(fill = `Cell typ
 quantiseq.long$`Cell type` <- factor(as.character(quantiseq.long$`Cell type`), levels = quantiseq.long.mean %>% filter(group=="sc-enriched") %>% arrange(-Mean_prop) %>% pull(`Cell type`) %>% rev())
 quantiseq.long$sample_id <- factor(as.character(quantiseq.long$sample_id), levels = quantiseq.long %>% arrange(`Cell type`,Proportion) %>% pull(sample_id) %>% rev() %>% unique() %>% rev())
 
-Fig1F_sce <- ggplot(quantiseq.long %>% filter(group=="sc-enriched"), aes(fill = `Cell type`, color = `Cell type`, y = Proportion, x = sample_id)) + 
+Fig1G_sce <- ggplot(quantiseq.long %>% filter(group=="sc-enriched"), aes(fill = `Cell type`, color = `Cell type`, y = Proportion, x = sample_id)) + 
     geom_bar(position = "stack", stat = "identity", width = 1) + theme_void() + scale_fill_manual(values=cell11) + scale_color_manual(values=cell11) + coord_cartesian(xlim=c(0,nmax)) +
     theme(legend.position = "none")
 
-Fig1F_A1 + Fig1F_A2 + Fig1F_B + Fig1F_sce
+Fig1G_A1 + Fig1G_A2 + Fig1G_B + Fig1G_sce
 
-ggsave(filename="Fig1F_raw.svg",Fig1F_A1 + Fig1F_A2 + Fig1F_B + Fig1F_sce,width=2.5*2,height=2.5*2)
+ggsave(filename="Fig1G_raw.svg",Fig1G_A1 + Fig1G_A2 + Fig1G_B + Fig1G_sce,width=2.5*2,height=2.5*2)
 
 ```
