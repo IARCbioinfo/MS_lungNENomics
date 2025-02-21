@@ -1,0 +1,254 @@
+---
+title: "ExtDataFig1BC"
+author: "N. Alcala"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Extended Data Figure 1 panels B and C: supplementary immune cell analysis of bulk sequencing data
+
+This document produces pannels B and C from Figure 1 from the lungNENomics manuscript, describing supplementary immune cell analyses: immune cell deconvolutions and archetype analyses.
+
+## Panel B
+
+### Load libraries
+
+```{r pressure, echo=FALSE}
+library(tidyverse)
+library(patchwork)
+library(ggbeeswarm)
+library(immunedeconv)
+```
+
+### load lungNENomics color schemes
+For now, this only runs locally. Nevertheless, not necessary to run, just provides cosmetics.
+```{r}
+source("/data/lungNENomics/work/Descriptive_manuscript_data/Colour_palettes.R")
+colors_clusters = c("Ca A1"="#999933", "Ca A2"= "#DDCC77", "Ca B"= "#117733", "sc-enriched"="#CC6677",  
+                    "Typical"="#9DB802","Atypical"="#025B0E","undetermined"="#CEDB80",
+                    "LCNEC"="#824833" ,"SCLC"="#000000",
+                    SINET = "#2ad4ffff") #, "Adeno-Ca"="#ff80e5ff", "Squamous-Cell-Ca"="#8080ffff") 
+```
+
+
+### Prepare the deconvolution
+We get cell expression signature matrices
+```{r}
+# the quantiseq TIL10 signature
+TIL10 = read_tsv( system.file("extdata", paste0("TIL10","_signature.txt"), package = "quantiseqr", mustWork = TRUE) )
+
+TIL10.mat = as.matrix(TIL10[,-1])
+rownames(TIL10.mat) = TIL10$ID
+
+# the abis, estimate, and timer matrices
+abis.mat = read.table("/home/alcalan/R/x86_64-pc-linux-gnu-library/4.1/immunedeconv/extdata/abis/sigmatrixRNAseq.txt")
+estimate.mat = readRDS("/home/alcalan/R/x86_64-pc-linux-gnu-library/4.1/immunedeconv/extdata/estimate/estimate_genes.rds")
+timer.mat = read_tsv("/home/alcalan/R/x86_64-pc-linux-gnu-library/4.1/immunedeconv/extdata/timer/immune_datasets/IRIS-marker-gene.txt")
+
+# the epic matrix
+epic.mat = left_join(bind_cols(gene=rownames(EPIC::TRef$refProfiles),as_tibble(EPIC::TRef$refProfiles)),
+                     bind_cols(gene=rownames(EPIC::BRef$refProfiles),as_tibble(EPIC::BRef$refProfiles)), by="gene" )
+```
+
+### load metadata
+We need to merge the metadata for the LCNEC and SCLC cohorts (data harmonized in Gabriel et al. 2020) with the clinical data from the lungNENomics cohort (in Table S1)
+
+```{r}
+Attributes = read_tsv(unzip('../../Data/GabrielEtAl2020/Attributes.txt.zip')[1])
+
+load("/data/lungNENomics/work/Descriptive_manuscript_data/MOFA/MOFA.Exp.Meth.Alt.CNV_lungNENomicsCombined/ParetoTI/variables_archetypes_MOFA_LNET.RData") # data also contained in Table S1
+gigascience_attributes = read_tsv("/data/lungNENomics/work/SextonoatesA/Attributes.txt")
+var_LNET$sample_id = as.character(var_LNET$sample_id)
+var_LNET$group = var_LNET$archetype_k4_LF3_label
+
+var_cli = bind_rows(var_LNET, Attributes %>% filter(Histopathology_simplified%in%c("LCNEC","SCLC")) %>% 
+                      mutate(sample_id = Sample_ID, group=Histopathology_simplified) %>% dplyr::select(sample_id,group) )
+var_cli = bind_rows(var_cli,tibble(sample_id=c("LCNEC3T","LCNEC4T"),group="LCNEC") )
+#write_tsv(var_cli,file = "var_cli_09052024.tsv")
+```
+
+### load expression data
+
+```{r}
+expr = load("/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/gene_TPM_matrix_PCA_LCNEC_SCLC_ITH_TR.RData")
+annot <- load("/data/lungNENomics/work/Descriptive_manuscript_data/gencode_hg38_v33.RData")
+gene_TPM_matrix = left_join(gene_TPM_matrix,ref.33.gene %>% dplyr::select(gene_id,gene_name) ) %>% relocate(gene_name , .after=gene_id)
+
+gene_TPM_matrix.df = as.data.frame(gene_TPM_matrix[,-(1:2)],row.names = gene_TPM_matrix$gene_name)
+```
+
+### Load quantiseq data
+```{r}
+quantiseq = read_csv("/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/quanTIseq_matrix_PCA_LCNEC_SCLC_ITH_TR.csv")[,-1]
+quantiseq = left_join(quantiseq,var_cli%>% dplyr::select(sample_id,group))
+# put into immunedeconv format
+colnames(quantiseq)[2:12] = c( "B cell","Macrophage M1","Macrophage M2","Monocyte","Neutrophil","NK cell","T cell CD4+ (non-regulatory)", 
+                               "T cell CD8+","T cell regulatory (Tregs)","Myeloid dendritic cell","uncharacterized cell")
+
+quantiseq = quantiseq %>% pivot_longer(cols = `B cell`:`uncharacterized cell`,names_to = "cell_type",values_to = "proportion") %>% 
+  pivot_wider(id_cols=-group,names_from = sample_id,values_from=proportion)
+```
+
+### Load music deconvolution data
+Because we used music on a custom single-cell reference from collaborators at EMBL Barcelona, we do not perform the computation here and just load the results
+```{r}
+music = read_csv("/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/music_deconvoluted_cell_proportions_data.csv")
+
+music = music %>% pivot_longer(cols = `T_conv`:`Neuroendocrine NEUROD1+`,names_to = "cell_type",values_to = "proportion") %>% 
+    pivot_wider(names_from = Sample,values_from=proportion)
+```
+
+### Run immune cell deconv algorithms
+Note: per the immunedeconv documentation, only EPIC, quanTIseq, and CIBERSORT abs. allow to compare between samples
+
+```{r}
+immune_abis = deconvolute(gene_TPM_matrix.df, "abis",tumor = TRUE)
+immune_mcpcounter = deconvolute(gene_TPM_matrix.df, "mcp_counter")
+immune_estimate = deconvolute(gene_TPM_matrix.df[!duplicated(rownames(gene_TPM_matrix.df)),], "estimate",tumor = TRUE)
+immune_epic = deconvolute(gene_TPM_matrix.df[!duplicated(rownames(gene_TPM_matrix.df)),], "epic",tumor = TRUE)
+```
+
+We now rearrange the columns so the order matches between datasets and put them all in a dataframe
+```{r}
+quantiseq    = quantiseq[,colnames(immune_abis)]
+immune_music = bind_cols(cell_type=music$cell_type,as_tibble(matrix(NA,nrow(music),ncol(quantiseq)-1)))
+colnames(immune_music) = colnames(immune_abis)
+immune_music[,colnames(music)[-1]] = music[,-1]
+
+# check
+which( is.na(quantiseq[,colnames(immune_abis)][1,]) ) # no NAs introduced
+which( is.na(immune_music[,colnames(immune_music)][1,]) ) # some NAs introduced
+
+immune.long = bind_rows( quantiseq %>% pivot_longer(cols=LNEN002:LNEN278s2_TU3,names_to = "Sample",values_to = "Score") %>% mutate(method="quantiseq"),
+                         immune_abis %>% pivot_longer(cols=LNEN002:LNEN278s2_TU3,names_to = "Sample",values_to = "Score") %>% mutate(method="abis"),
+                         immune_mcpcounter %>% pivot_longer(cols=LNEN002:LNEN278s2_TU3,names_to = "Sample",values_to = "Score") %>% mutate(method="mcpcounter"),
+                         immune_music %>% pivot_longer(cols=LNEN002:LNEN278s2_TU3,names_to = "Sample",values_to = "Score") %>% mutate(method="music"),
+                         immune_estimate %>% pivot_longer(cols=LNEN002:LNEN278s2_TU3,names_to = "Sample",values_to = "Score") %>% mutate(method="estimate"),
+                         immune_epic %>% pivot_longer(cols=LNEN002:LNEN278s2_TU3,names_to = "Sample",values_to = "Score") %>% mutate(method="epic")
+)
+
+immune.long = left_join(immune.long,var_cli %>% dplyr::select(sample_id,group),by=c(Sample="sample_id"))
+
+# check merge 
+immune.long[is.na(immune.long$group),] %>% pull(Sample) %>% unique()
+
+## global profiles
+ggplot(immune.long %>% filter(!is.na(group)), aes(x=Sample,y=Score,fill=cell_type,col=cell_type)) + 
+  geom_bar(position = "stack", stat = "identity", width = 1) + facet_grid(method~group,scales = "free")+
+  theme_classic() + ylab("") #+ scale_fill_manual(values=cell11) #+ scale_color_manual(values=cell11)
+```
+
+#### Compare global immune infiltration estimates across groups
+
+For methods that do not provide an estimate of the total immune infiltration, we sum up the scores for each type of immune cell
+```{r}
+immune_scores = tibble(Sample = colnames(immune_abis[,-1]),
+  abis        = colSums(immune_abis[,-1]), 
+        mcpcounter = colSums(immune_mcpcounter[1:9,-1]),
+        estimate   = unlist(immune_estimate[2,-1]),
+        epic       = colSums(immune_epic[c(1,3:4,6:7),-1]),
+        music      = colSums(immune_music[c(1:5,7:13),-1],na.rm=T),
+        quantiseq = colSums(quantiseq[1:10,-1]) )
+```
+
+To simplify comparisons, compute z-scores for each column, and put the table in long format for plotting
+```{r}
+immune_scores[,2:7] = apply(immune_scores[,-1],2,scale)
+immune_scores.long = immune_scores %>% pivot_longer(cols=abis:quantiseq , names_to="Method",values_to = "Score")
+# we merge with the clinical data to get the groups
+immune_scores.long = left_join(immune_scores.long,var_cli %>% dplyr::select(sample_id,group),by=c(Sample="sample_id"))
+```
+
+We compute averages across methods, and compare them statistically. Because each sample has estimates from several methods, we use a hierarchical model with a random intercept.
+```{r}
+library(lme4)
+immune_scores.mean = immune_scores.long %>% group_by(group) %>% summarize(Score = mean(Score,na.rm=T))
+
+summary(lmer(Score~group + Method + (1|Sample),data=immune_scores.long))
+```
+
+We now plot the results
+```{r}
+ggimmune = ggplot(immune_scores.long %>% filter(!group%in%c("LCNEC","SCLC"),!is.na(group)), aes(x=Method,y=Score,fill=group) ) + 
+  geom_violin(col=NA) +   geom_boxplot(width=0.1,fill="white") + #geom_beeswarm(col="white",shape=21,size=1)+ 
+  geom_hline(data=immune_scores.mean %>% filter(!group%in%c("LCNEC","SCLC"),!is.na(group)),aes(yintercept=Score)) + 
+  theme_classic() + scale_fill_manual(values=c(arc4,type5)) +ylab("Immune score")+xlab("") + guides(fill="none") + facet_wrap(.~group) + 
+  theme(axis.text.x = element_text(angle=90,hjust = 1,vjust=0.5))
+
+ggimmune
+
+ggsave(filename="/data/lungNENomics/work/alcalan/Figures/ExtendedDataFig_1B_Immune.svg",ggimmune,height =2.5*2,width=3*2)
+```
+
+## Panel C : fibroblast estimates
+
+Extract estimates and test differences between groups
+```{r}
+fibro.tib = immune.long %>% filter(cell_type %in% c("Cancer associated fibroblast","stroma score","Fibro") )
+
+# compare mcpcounter estimates
+wilcox.test(fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="mcpcounter",group=="Ca A1") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="mcpcounter",group=="Ca A2") %>% pull(Score)) # same
+wilcox.test(fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="mcpcounter",group=="Ca A1") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="mcpcounter",group=="Ca B") %>% pull(Score)) # less in B
+wilcox.test(fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="mcpcounter",group=="Ca A1") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="mcpcounter",group=="sc-enriched") %>% pull(Score)) # more in SC
+wilcox.test(fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="mcpcounter",group=="Ca A2") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="mcpcounter",group=="Ca B") %>% pull(Score)) # less in B
+wilcox.test(fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="mcpcounter",group=="Ca A2") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="mcpcounter",group=="sc-enriched") %>% pull(Score)) # slightly more in SC
+
+# compare EPIC
+wilcox.test(fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="epic",group=="Ca A1") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="epic",group=="Ca A2") %>% pull(Score)) # same
+wilcox.test(fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="epic",group=="Ca A1") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="epic",group=="Ca B") %>% pull(Score)) # less in B
+wilcox.test(fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="epic",group=="Ca A1") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="epic",group=="sc-enriched") %>% pull(Score)) # more in SC
+wilcox.test(fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="epic",group=="Ca A2") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="epic",group=="Ca B") %>% pull(Score)) # less in B
+wilcox.test(fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="epic",group=="Ca A2") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="epic",group=="sc-enriched") %>% pull(Score)) # more in SC
+
+# compare estimate
+wilcox.test(fibro.tib %>% filter(cell_type == "stroma score",group=="Ca A1") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "stroma score",group=="Ca A2") %>% pull(Score)) # same
+wilcox.test(fibro.tib %>% filter(cell_type == "stroma score",group=="Ca A1") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "stroma score",group=="Ca B") %>% pull(Score)) # same
+wilcox.test(fibro.tib %>% filter(cell_type == "stroma score",group=="Ca A1") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "stroma score",group=="sc-enriched") %>% pull(Score)) # more in SC
+wilcox.test(fibro.tib %>% filter(cell_type == "stroma score",group=="Ca A2") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "stroma score",group=="Ca B") %>% pull(Score)) # same
+wilcox.test(fibro.tib %>% filter(cell_type == "stroma score",group=="Ca A2") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "stroma score",group=="sc-enriched") %>% pull(Score)) # more in SC
+
+# compare music
+wilcox.test(fibro.tib %>% filter(cell_type == "Fibro",group=="Ca A1") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "Fibro",group=="Ca A2") %>% pull(Score)) # same
+wilcox.test(fibro.tib %>% filter(cell_type == "Fibro",group=="Ca A1") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "Fibro",group=="Ca B") %>% pull(Score)) # same
+wilcox.test(fibro.tib %>% filter(cell_type == "Fibro",group=="Ca A1") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "Fibro",group=="sc-enriched") %>% pull(Score)) # same
+wilcox.test(fibro.tib %>% filter(cell_type == "Fibro",group=="Ca A2") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "Fibro",group=="Ca B") %>% pull(Score)) # same
+wilcox.test(fibro.tib %>% filter(cell_type == "Fibro",group=="Ca A2") %>% pull(Score) , 
+            fibro.tib %>% filter(cell_type == "Fibro",group=="sc-enriched") %>% pull(Score)) # same
+
+fibro.tib$group = factor(fibro.tib$group,levels=c("LCNEC","SCLC","sc-enriched","Ca A2","Ca A1","Ca B"))
+
+ggfibro = ggplot(fibro.tib %>% filter(!group%in%c("LCNEC","SCLC"),!is.na(group)), aes(x=group,y=Score,fill=group) ) + geom_violin(col=NA) + #geom_boxplot(width=0.1,fill="white") +
+  geom_beeswarm(col="white",shape=21,size=1)+
+  ggpubr::stat_compare_means(comparisons = list(c("sc-enriched","Ca A2"),c("Ca A2","Ca A1"),c("Ca A1","Ca B"),
+                                        c("sc-enriched","Ca A1"),c("sc-enriched","Ca B"),
+                                        c("Ca A2","Ca B")),
+                     method = "wilcox.test",
+                     #label.y = c(0.16,0.15,0.17,0.18)*100,
+                     label = "p.signif",hide.ns = T , bracket.size = 0.6,tip.length = 0,vjust = 0.6) + 
+  #ylim(c(0,20))+
+  theme_classic() + scale_fill_manual(values=c(arc4,type5)) +ylab("Fibroblast score")+xlab("") + guides(fill="none") + facet_wrap(.~method,scales = "free_y") + 
+  theme(axis.text.x = element_text(angle=90,hjust = 1,vjust=0.5))
+
+ggfibro
+
+ggsave(filename="/data/lungNENomics/work/alcalan/Figures/ExtendedDataFig_1C_Fibro.svg",ggfibro,height =2.5*2,width=3*2)
+```
