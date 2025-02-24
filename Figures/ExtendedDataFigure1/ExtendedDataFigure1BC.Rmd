@@ -180,12 +180,29 @@ ggimmune
 ggsave(filename="/data/lungNENomics/work/alcalan/Figures/ExtendedDataFig_1B_Immune.svg",ggimmune,height =2.5*2,width=3*2)
 ```
 
+Save scores to a table for supplementary files
+```{r}
+immune.wide = (immune.long %>% mutate(cell_type=paste0(method,".",cell_type)))[,1:3] %>% pivot_wider(names_from=cell_type,values_from=Score)
+
+write_csv(immune.wide,file="/data/lungNENomics/work/alcalan/tomoveto_Descriptive_manuscript_data/RNAseq/TableS1_cell_deconvolution.csv")
+```
+
 ## Panel C : fibroblast estimates
 
 Extract estimates and test differences between groups
 ```{r}
 fibro.tib = immune.long %>% filter(cell_type %in% c("Cancer associated fibroblast","stroma score","Fibro") )
+```
 
+```{r}
+fibro.tib2 = immune.long %>% filter(cell_type %in% c("Cancer associated fibroblast","stroma score","Fibro") ) %>% pivot_wider(id_cols = -cell_type,names_from=method,values_from=Score)
+
+fibro.tib2[,3:6] = apply(fibro.tib2[,3:6],2,scale)
+fibro.tib2.long = fibro.tib2 %>% pivot_longer(cols = mcpcounter:epic,names_to = "Method",values_to = "Score")
+```
+
+We now compare statistically the proportions of the different cell types
+```{r}
 # compare mcpcounter estimates
 wilcox.test(fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="mcpcounter",group=="Ca A1") %>% pull(Score) , 
             fibro.tib %>% filter(cell_type == "Cancer associated fibroblast",method=="mcpcounter",group=="Ca A2") %>% pull(Score)) # same
@@ -233,22 +250,27 @@ wilcox.test(fibro.tib %>% filter(cell_type == "Fibro",group=="Ca A2") %>% pull(S
             fibro.tib %>% filter(cell_type == "Fibro",group=="Ca B") %>% pull(Score)) # same
 wilcox.test(fibro.tib %>% filter(cell_type == "Fibro",group=="Ca A2") %>% pull(Score) , 
             fibro.tib %>% filter(cell_type == "Fibro",group=="sc-enriched") %>% pull(Score)) # same
+```
 
-fibro.tib$group = factor(fibro.tib$group,levels=c("LCNEC","SCLC","sc-enriched","Ca A2","Ca A1","Ca B"))
+We perform a global test 
+```{r}
+fibro.mean = fibro.tib2.long %>% group_by(group) %>% summarize(Score = mean(Score,na.rm=T))
 
-ggfibro = ggplot(fibro.tib %>% filter(!group%in%c("LCNEC","SCLC"),!is.na(group)), aes(x=group,y=Score,fill=group) ) + geom_violin(col=NA) + #geom_boxplot(width=0.1,fill="white") +
-  geom_beeswarm(col="white",shape=21,size=1)+
-  ggpubr::stat_compare_means(comparisons = list(c("sc-enriched","Ca A2"),c("Ca A2","Ca A1"),c("Ca A1","Ca B"),
-                                        c("sc-enriched","Ca A1"),c("sc-enriched","Ca B"),
-                                        c("Ca A2","Ca B")),
-                     method = "wilcox.test",
-                     #label.y = c(0.16,0.15,0.17,0.18)*100,
-                     label = "p.signif",hide.ns = T , bracket.size = 0.6,tip.length = 0,vjust = 0.6) + 
-  #ylim(c(0,20))+
-  theme_classic() + scale_fill_manual(values=c(arc4,type5)) +ylab("Fibroblast score")+xlab("") + guides(fill="none") + facet_wrap(.~method,scales = "free_y") + 
+summary(lmer(Score~group + Method + (1|Sample),data=fibro.tib2.long)) #sce have significantly more fibroblasts
+```
+
+#### Plot
+```{r}
+fibro.tib2.long$group = factor(fibro.tib2.long$group,levels=c("Ca A1","Ca A2","Ca B","sc-enriched","LCNEC","SCLC"))
+
+ggfibro = ggplot(fibro.tib2.long %>% filter(!group%in%c("LCNEC","SCLC"),!is.na(group)), aes(x=Method,y=Score,fill=group) ) + 
+  geom_violin(col=NA) +   geom_boxplot(width=0.1,fill="white") + 
+  geom_hline(data=fibro.mean %>% filter(!group%in%c("LCNEC","SCLC"),!is.na(group)),aes(yintercept=Score)) + 
+  theme_classic() + scale_fill_manual(values=c(arc4,type5)) +ylab("Immune score")+xlab("") + guides(fill="none") + facet_grid(.~group) + 
   theme(axis.text.x = element_text(angle=90,hjust = 1,vjust=0.5))
+
 
 ggfibro
 
-ggsave(filename="/data/lungNENomics/work/alcalan/Figures/ExtendedDataFig_1C_Fibro.svg",ggfibro,height =2.5*2,width=3*2)
+ggsave(filename="/data/lungNENomics/work/alcalan/Figures/ExtendedDataFig_1C_Fibro.svg",ggfibro,height =2.5,width=2.5*4)
 ```
