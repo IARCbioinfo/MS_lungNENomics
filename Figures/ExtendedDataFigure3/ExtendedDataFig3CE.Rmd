@@ -1,0 +1,225 @@
+---
+title: "ExtendedDataFig3CE.Rmd"
+author: "Alcala and Mathian"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Extended Data Figure 2 panels C and E: SCLC subtype classification applied to lung NETs
+
+This document produces pannels C and E from Extended Data Figure 3 from the lungNENomics manuscript, displaying the expression of DLL3 and of markers used for the molecular subtyping of small cell lung cancer.
+
+### Load libraries
+
+```{r pressure, echo=FALSE}
+library(tidyverse)
+library(patchwork)
+library(ggbeeswarm)
+library(ggpubr)
+library(ComplexHeatmap)
+```
+
+# Load Data
+
+We load the expression in TPM unit, annotation, and clinical variables. We exclude samples LNEN246 and 251 which did not have expression data : 
+```{r}
+load("/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/gene_TPM_nosex_matrix_PCA_LCNEC_SCLC_ITH_TR.RData") # expression
+load("/data/lungNENomics/work/Descriptive_manuscript_data/MOFA/MOFA.Exp.Meth.Alt.CNV_lungNENomicsCombined/ParetoTI/variables_archetypes_MOFA_LNET.RData")
+load("/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/vst_expr_matrix_PCA_LCNEC_SCLC_ITH_TR.RData")
+load("/data/lungNENomics/work/Descriptive_manuscript_data/gencode_hg38_v33.RData") # annotation
+
+dim(TPM_nosex)
+head(var_LNET)
+table(var_LNET$sample_id, var_LNET$archetype_k4_LF3_label)
+
+TPM_nosex = TPM_nosex[,!colnames(TPM_nosex)%in%c("LNEN246_TU","LNEN251_TU1")]
+tpm <- as.data.frame(t(TPM_nosex))
+
+vst_expr_matrix = vst_expr_matrix[,!colnames(vst_expr_matrix)%in%c("LNEN246_TU","LNEN251_TU1")]
+vst <- as.data.frame(t(vst_expr_matrix))
+
+```
+
+### load lungNENomics color schemes
+For now, this only runs locally. Nevertheless, not necessary to run, just provides cosmetics.
+```{r}
+source("/data/lungNENomics/work/Descriptive_manuscript_data/Colour_palettes.R")
+```
+
+
+# Panel C: DLL3 expression across groups
+
+We now plot the expression in TPM, using the VST values for statistical testing using linear models (t-tests and ANOVA).
+```{r}
+DLL3_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="DLL3")]
+
+expr_gene_tmp_vst <- data.frame("sample_id" = rownames(vst),
+                                "DLL3_vst" = vst[,colnames(vst) == DLL3_id],
+                                "DLL3_tpm" = tpm[,colnames(tpm)==DLL3_id ] 
+                               )
+expr_gene_tmp_vst = merge(expr_gene_tmp_vst,
+                          var_LNET[is.na(var_LNET$RNAseq_batch)==F & is.na(var_LNET$archetype_k4_LF3_label)==F,]  %>% 
+                            dplyr::select(sample_id, archetype_k4_LF3_label), by="sample_id")#
+expr_gene_tmp_vst[, grep("_tpm$", colnames(expr_gene_tmp_vst))] <- log2(expr_gene_tmp_vst[, grep("_tpm$", colnames(expr_gene_tmp_vst))] + 1)
+
+
+p_DLL3_archetype <- ggplot(data=expr_gene_tmp_vst, aes(x=archetype_k4_LF3_label, y=log10(DLL3_tpm+1), fill=archetype_k4_LF3_label)) +
+  geom_violin(scale = "width") + geom_boxplot(width=0.1,fill="white") +
+  geom_quasirandom(shape=21, col="white",data=expr_gene_tmp_vst %>% filter(archetype_k4_LF3_label =="sc-enriched")) +
+  scale_fill_manual(values=c(arc4)) + geom_hline(yintercept = log10(1+1),linetype="dashed") + 
+  stat_compare_means(
+    comparisons=list(
+      c("Ca A1", "Ca A2"),
+      c("Ca A1", "Ca B"),
+      c("Ca A1", "sc-enriched"),
+      c("Ca A2", "Ca B"),
+      c("Ca A2", "sc-enriched"),
+      c("Ca B", "sc-enriched")
+    ),
+    method="t.test",
+    label="p.signif",
+    hide.ns=TRUE,
+    tip.length=0,
+    step.increase=0.01,
+    mapping=aes(y=DLL3_vst),label.y = 0.3 # Specify DLL3_vst for statistical comparisons
+  ) +
+  stat_compare_means(method="anova", label.y=max(log10(expr_gene_tmp_vst$DLL3_tpm+1), na.rm=TRUE)+0.5, mapping=aes(y=DLL3_vst)) + # Use DLL3_vst for ANOVA
+  theme_classic() + ylab("DLL3") +
+  theme(legend.position="bottom",legend.title=element_blank(),axis.title.x=element_blank())+
+  scale_y_continuous(breaks=c(0,log10(1+1), log10(1+5), log10(1+10)),labels = c(0,1,5,10)) + 
+  guides(fill="none")
+
+
+ggsave("ExtendedDataFigure_3c_boxplot_DLL3_log.svg",p_DLL3_archetype, width=3, height=3)
+```
+
+# Panel E
+
+## Data preparation
+We then extract relevant genes and format the data
+```{r}
+ref.33.gene$gene_id[which(ref.33.gene$gene_name=="ASCL1")]# "ENSG00000139352.4"
+ASCL1_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="ASCL1")]
+
+ref.33.gene$gene_id[which(ref.33.gene$gene_name=="NEUROD1")]# "ENSG00000162992.3"
+NEUROD1_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="NEUROD1")]
+
+ref.33.gene$gene_id[which(ref.33.gene$gene_name=="POU2F3")]# ENSG00000137709.10"
+POU2F3_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="POU2F3")]
+```
+
+We get the gene for the SCLC I group from papers "Emerging advances in defining the molecular and therapeutic landscape of small-cell lung cancer" and "Patterns of transcription factor programs and immune pathway activation define four major subtypes of SCLC with distinct therapeutic vulnerabilities"
+
+```{r}
+ref.33.gene$gene_id[which(ref.33.gene$gene_name=="CD274")]# ENSG00000137709.10"
+CD274_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="CD274")]
+
+ref.33.gene$gene_id[which(ref.33.gene$gene_name=="PDCD1")]#
+PDCD1_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="PDCD1")]
+
+ref.33.gene$gene_id[which(ref.33.gene$gene_name=="CTLA4")]#
+CTLA4_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="CTLA4")]
+
+ref.33.gene$gene_id[which(ref.33.gene$gene_name=="CD80")]#
+CD80_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="CD80")]
+
+ref.33.gene$gene_id[which(ref.33.gene$gene_name=="CD86")]#
+CD86_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="CD86")]
+
+ref.33.gene$gene_id[which(ref.33.gene$gene_name=="CD38")]#
+CD38_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="CD38")]
+
+ref.33.gene$gene_id[which(ref.33.gene$gene_name=="TIGIT")]#
+TIGIT_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="TIGIT")]
+
+ref.33.gene$gene_id[which(ref.33.gene$gene_name=="VSIR")]# synonym VISTA
+VSIR_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="VSIR")]
+
+ref.33.gene$gene_id[which(ref.33.gene$gene_name=="ICOS")]# 
+ICOS_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="ICOS")]
+
+ref.33.gene$gene_id[which(ref.33.gene$gene_name=="IDO1")]# 
+IDO1_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="IDO1")]
+
+ref.33.gene$gene_id[which(ref.33.gene$gene_name=="LAG3")]# 
+LAG3_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="LAG3")]
+
+ref.33.gene$gene_id[which(ref.33.gene$gene_name=="CCL5")]# 
+CCL5_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="CCL5")]
+
+ref.33.gene$gene_id[which(ref.33.gene$gene_name=="CXCL10")]# 
+CXCL10_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="CXCL10")]
+```
+
+
+## Create VST TPM table 
+```{r}
+expr_gene_OI <- data.frame("sample_id" = rownames(tpm),
+                           "ASCL1" = tpm[,colnames(tpm)==ASCL1_id ], 
+                           "NEUROD1" = tpm[,colnames(tpm)==NEUROD1_id ],
+                           "POU2F3" = tpm[,colnames(tpm)==POU2F3_id ],
+                           "CXCL10" = tpm[,colnames(tpm)==CXCL10_id ],
+                           "CCL5" = tpm[,colnames(tpm)==CCL5_id ],
+                           "LAG3" = tpm[,colnames(tpm)==LAG3_id ],
+                           "IDO1" = tpm[,colnames(tpm)==IDO1_id ],
+                           "ICOS" = tpm[,colnames(tpm)==ICOS_id ],
+                           "VISTA" = tpm[,colnames(tpm)==VSIR_id ],
+                           "TIGIT" = tpm[,colnames(tpm)==TIGIT_id ],
+                           "CD38" = tpm[,colnames(tpm)==CD38_id ],
+                           "CD86" = tpm[,colnames(tpm)==CD86_id ],
+                           "CD80" = tpm[,colnames(tpm)==CD80_id ],
+                           "CTLA4" = tpm[,colnames(tpm)==CTLA4_id ],
+                           "PDCD1" = tpm[,colnames(tpm)==PDCD1_id ],
+                           "CD274" = tpm[,colnames(tpm)==CD274_id ]
+                           )
+
+dim(expr_gene_OI)
+```
+
+## Get archetype of the LNET cohort
+```{r}
+dim(var_LNET[is.na(var_LNET$RNAseq_batch)==F & is.na(var_LNET$archetype_k4_LF3_label)==F,]  %>% dplyr::select(sample_id, archetype_k4_LF3_label))
+expr_gene_OI = merge(expr_gene_OI,
+      var_LNET[is.na(var_LNET$RNAseq_batch)==F & is.na(var_LNET$archetype_k4_LF3_label)==F,]  %>% dplyr::select(sample_id, archetype_k4_LF3_label),
+      by="sample_id")#
+
+expr_gene_OI$I_score <- rowMeans(expr_gene_OI[,5:(ncol(expr_gene_OI)-1)] )
+
+## Log Normalization TPM
+expr_gene_OI[,c(2:(ncol(expr_gene_OI)-2),ncol(expr_gene_OI)) ] = log10(expr_gene_OI[,c(2:(ncol(expr_gene_OI)-2),ncol(expr_gene_OI)) ] +1)
+```
+
+## Draw heatmap
+
+```{r}
+expr_gene_OI <- expr_gene_OI[order(expr_gene_OI$archetype),]
+expr_gene_OI_mat <-  t(as.matrix(expr_gene_OI[,c(2:4, 19)]))
+                                                                                                      
+ha_cols = HeatmapAnnotation(
+  Archetype = expr_gene_OI$archetype,
+  col = list(Archetype =  c(arc4)),
+  annotation_legend_param = list(
+    Archetype = list(direction = "horizontal", title = NULL))
+    )
+
+
+color_ranges = c(RColorBrewer::brewer.pal(9,"RdBu")[9], "white" , RColorBrewer::brewer.pal(9,"RdBu")[1])
+ht <- Heatmap(expr_gene_OI_mat,col = circlize::colorRamp2(c(0,1,4),color_ranges) ,
+              top_annotation  = ha_cols,  cluster_columns  = FALSE, show_column_names = FALSE , cluster_rows  = FALSE,
+              heatmap_legend_param = list( direction = "horizontal" , title = NULL )#,
+      )
+
+
+draw(ht, merge_legend = TRUE, heatmap_legend_side = "bottom", 
+     annotation_legend_side = "bottom")
+
+svg("ExtendedDataFigure3e.svg", width=4, height=3)
+draw(ht, merge_legend = TRUE, heatmap_legend_side = "bottom", 
+     annotation_legend_side = "bottom")
+dev.off()
+```
+
