@@ -264,7 +264,7 @@ summary(lmer(Score~group + Method + (1|Sample),data=fibro.tib2.long)) #sce have 
 fibro.tib2.long$group = factor(fibro.tib2.long$group,levels=c("Ca A1","Ca A2","Ca B","sc-enriched","LCNEC","SCLC"))
 
 ggfibro = ggplot(fibro.tib2.long %>% filter(!group%in%c("LCNEC","SCLC"),!is.na(group)), aes(x=Method,y=Score,fill=group) ) + 
-  geom_violin(col=NA) +   geom_boxplot(width=0.1,fill="white") + 
+  geom_violin(scale = "width",col=NA) +   geom_boxplot(width=0.1,fill="white") + 
   geom_hline(data=fibro.mean %>% filter(!group%in%c("LCNEC","SCLC"),!is.na(group)),aes(yintercept=Score)) + 
   theme_classic() + scale_fill_manual(values=c(arc4,type5)) +ylab("Immune score")+xlab("") + guides(fill="none") + facet_grid(.~group) + 
   theme(axis.text.x = element_text(angle=90,hjust = 1,vjust=0.5))
@@ -272,5 +272,5 @@ ggfibro = ggplot(fibro.tib2.long %>% filter(!group%in%c("LCNEC","SCLC"),!is.na(g
 
 ggfibro
 
-ggsave(filename="/data/lungNENomics/work/alcalan/Figures/ExtendedDataFig_1C_Fibro.svg",ggfibro,height =2.5,width=2.5*4)
+ggsave(filename="/data/lungNENomics/work/alcalan/Figures/ExtendedDataFig_1C_Fibro.svg",ggfibro,height =2.5,width=1.5*2)
 ```
