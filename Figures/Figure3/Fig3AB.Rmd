@@ -1,0 +1,130 @@
+---
+title: "Fig3AB"
+author: "N. Alcala"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Figure 3 panels A and B: single-cell deconvolution
+
+This document produces pannels A and B from Figure 3 from the lungNENomics manuscript, describing the deconvolution of bulk RNA-seq data with a single-cell reference.
+
+## Panel A
+
+### Load libraries
+
+```{r pressure, echo=FALSE}
+library(tidyverse)
+library(patchwork)
+library(ggbeeswarm)
+```
+
+### load lungNENomics color schemes
+For now, this only runs locally. Nevertheless, not necessary to run, just provides cosmetics.
+```{r}
+source("/data/lungNENomics/work/Descriptive_manuscript_data/Colour_palettes.R")
+colors_clusters = c("Ca A1"="#999933", "Ca A2"= "#DDCC77", "Ca B"= "#117733", "sc-enriched"="#CC6677",  
+                    "Typical"="#9DB802","Atypical"="#025B0E","undetermined"="#CEDB80",
+                    "LCNEC"="#824833" ,"SCLC"="#000000",
+                    SINET = "#2ad4ffff") #, "Adeno-Ca"="#ff80e5ff", "Squamous-Cell-Ca"="#8080ffff") 
+
+colors_cells = c("Lower Airway Progenitor"="#732200ff", "Neuroendocrine NEUROD1+"= "#ff9955ff", "Neuroendocrine CALCA+"= "#c87137ff",
+                 "Neuroendocrine NIBAN1+"="#CC6677", "Neuroendocrine APCDD1+"="#ffb380ff","Neuroendocrine CALML3+"="#deaa87ff",
+                 "Vascular"="#ff8080ff", "Epithelial"="#87deaaff" ,"Immune"="#c837abff", Stromal = "#b7b7c8ff") 
+```
+
+
+### load metadata
+We need to merge the metadata for the LCNEC and SCLC cohorts (data harmonized in Gabriel et al. 2020) with the clinical data from the lungNENomics cohort (in Table S1)
+
+```{r}
+Attributes = read_tsv(unzip('../../Data/GabrielEtAl2020/Attributes.txt.zip')[1])
+
+load("/data/lungNENomics/work/Descriptive_manuscript_data/MOFA/MOFA.Exp.Meth.Alt.CNV_lungNENomicsCombined/ParetoTI/variables_archetypes_MOFA_LNET.RData") # data also contained in Table S1
+gigascience_attributes = read_tsv("/data/lungNENomics/work/SextonoatesA/Attributes.txt")
+var_LNET$sample_id = as.character(var_LNET$sample_id)
+var_LNET$group = var_LNET$archetype_k4_LF3_label
+
+var_cli = bind_rows(var_LNET, Attributes %>% filter(Histopathology_simplified%in%c("LCNEC","SCLC")) %>% 
+                      mutate(sample_id = Sample_ID, group=Histopathology_simplified) %>% dplyr::select(sample_id,group) )
+var_cli = bind_rows(var_cli,tibble(sample_id=c("LCNEC3T","LCNEC4T"),group="LCNEC") )
+#write_tsv(var_cli,file = "var_cli_09052024.tsv")
+```
+
+### Load music deconvolution data
+Because we used music on a custom single-cell reference from collaborators at EMBL Barcelona, we do not perform the computation here and just load the results
+```{r}
+music = read_csv("/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/music_deconvoluted_cell_proportions_data.csv")
+
+music = music %>% pivot_longer(cols = `T_conv`:`Neuroendocrine NEUROD1+`,names_to = "cell_type",values_to = "proportion") %>% 
+    pivot_wider(names_from = Sample,values_from=proportion)
+```
+
+
+### Plot the results
+We first format the data
+```{r}
+music.long = music %>% pivot_longer(cols=LNEN002:LNEN278s2_TU3,names_to = "Sample",values_to = "Proportion",values_drop_na = F)
+music.long = left_join(music.long,var_cli %>% dplyr::select(sample_id,group),by=c(Sample="sample_id")) %>% filter(!is.na(Proportion))
+music.long = music.long %>% mutate(cell_type_coarse = case_when(str_detect(cell_type,"Neuroendocrine|Lower")~cell_type,
+                                                    str_detect(cell_type,"B|DC|Macrophage|Monocyte|T_|NK|Mast|Myeloid")~"Immune",
+                                                    str_detect(cell_type,"ibro")~"Stromal",
+                                                    str_detect(cell_type,"Basal|Club|Multiciliated|Muscle_Airway")~"Epithelial",
+                                                    str_detect(cell_type,"Endothelial|Pericyte|Plasma|ascular|ymphatic")~"Vascular") )
+
+# check merge 
+music.long[is.na(music.long$group),] %>% pull(Sample) %>% unique()
+```
+
+We exclude 2 samples with mismatched RNA-seq data 
+```{r}
+music.long = music.long %>% filter(!Sample %in%c("LNEN246_TU","LNEN251_TU1") )
+```
+
+
+```{r}
+# reorder 
+celltypesorder   = music.long %>% group_by(cell_type_coarse) %>% summarize(Proportion=mean(Proportion,na.rm=T)) %>% arrange(-Proportion) %>% pull(cell_type_coarse)
+
+music.long = music.long %>% mutate( group = factor(group,levels=c( "Ca A1","Ca A2","Ca B","sc-enriched","LCNEC","SCLC")) )
+music.long = music.long %>% mutate(cell_type_coarse = factor(cell_type_coarse,levels=celltypesorder))
+celltypes_groups = music.long %>% group_by(group,Sample,cell_type_coarse) %>% summarize(Proportion=sum(Proportion,na.rm=T)) %>% ungroup() %>% group_by(group,cell_type_coarse) %>%  summarize(Proportion=mean(Proportion,na.rm=T))
+
+samplesorder = music.long %>% arrange(group,cell_type_coarse,Proportion) %>% pull(Sample) %>% unique()
+
+music.long = music.long %>% mutate( Sample = factor(Sample,levels=samplesorder))
+
+## global profiles
+Fig3A = ggplot(music.long %>% filter(!is.na(group)), aes(x=Sample,y=Proportion,fill=cell_type_coarse)) + 
+  geom_bar(position = "stack", stat = "identity", width = 1,col=NA) + facet_grid(.~group) + 
+  scale_fill_manual(values=colors_cells) +scale_color_manual(values=colors_cells) +  
+  theme_classic() + ylab("") + theme(axis.text.x = element_blank(),axis.ticks.x = element_blank()) #+ scale_fill_manual(values=cell11) #+ scale_color_manual(values=cell11)
+
+## average profiles 
+ggplot(celltypes_groups %>% filter(!is.na(group)), aes(x=group,y=Proportion,fill=cell_type_coarse)) + 
+  geom_bar(position = "stack", stat = "identity", width = 1,col="black") + scale_fill_manual(values=colors_cells) + 
+  theme_classic() + ylab("") 
+
+ggsave(filename= "Fig3A_music_deconv.svg", Fig3A,height = 2.5,width=20)
+```
+
+## Panel B
+
+```{r}
+## average profiles 
+music.long.NE = music.long %>% filter(!is.na(group),cell_type_coarse %in% c("Lower Airway Progenitor","Neuroendocrine CALCA+",
+                                                                              "Neuroendocrine NEUROD1+","Neuroendocrine NIBAN1+",
+                                                                              "Neuroendocrine CALML3+")) %>% 
+  mutate(cell_type_coarse = factor(cell_type_coarse,levels=c("Lower Airway Progenitor","Neuroendocrine CALCA+",
+                                                                              "Neuroendocrine NEUROD1+","Neuroendocrine NIBAN1+",
+                                                                              "Neuroendocrine CALML3+")),
+         group = factor(group,levels=c( "Ca A1","Ca A2","Ca B","sc-enriched","LCNEC","SCLC")))
+
+Fig3B = ggplot(music.long.NE, aes(x=group,y=Proportion,fill=group)) + 
+  geom_violin(col=NA,scale = "width") +   geom_boxplot(width=0.1,fill="white") + #geom_beeswarm(col="white",shape=21,size=1)+ 
+  theme_classic() + scale_fill_manual(values=c(arc4,type5)) +ylab("Proportion")+xlab("") + guides(fill="none") + facet_grid(.~cell_type_coarse) + 
+  theme(axis.text.x = element_text(angle=90,hjust = 1,vjust=0.5)) + 
+  theme_classic() + ylab("") 
+
+ggsave(filename= "Fig3B_music_NEcells.svg", Fig3B,height = 2.5,width=2.2*4)
+```
