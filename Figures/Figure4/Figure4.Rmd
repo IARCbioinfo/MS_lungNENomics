@@ -1,0 +1,100 @@
+---
+title: "ExtDataFig4D"
+author: "N. Alcala"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Figure 4: Supra-carcinoids
+
+This document produces Figure 4 from the lungNENomics manuscript, describing the characteristics of supra-carcinoids.
+
+## Panel A
+
+### Load libraries
+
+```{r pressure, echo=FALSE}
+library(tidyverse)
+library(patchwork)
+library(ggbeeswarm)
+```
+
+### load lungNENomics color schemes
+For now, this only runs locally. Nevertheless, not necessary to run, just provides cosmetics.
+```{r}
+source("/data/lungNENomics/work/Descriptive_manuscript_data/Colour_palettes.R")
+colors_clusters = c("Ca A1"="#999933", "Ca A2"= "#DDCC77", "Ca B"= "#117733", "sc-enriched"="#CC6677",  
+                    "Typical"="#9DB802","Atypical"="#025B0E","undetermined"="#CEDB80",
+                    "LCNEC"="#824833" ,"SCLC"="#000000",
+                    SINET = "#2ad4ffff") #, "Adeno-Ca"="#ff80e5ff", "Squamous-Cell-Ca"="#8080ffff") 
+```
+
+
+### load metadata
+We need to merge the metadata for the LCNEC and SCLC cohorts (data harmonized in Gabriel et al. 2020) with the clinical data from the lungNENomics cohort (in Table S1)
+
+```{r}
+Attributes = read_tsv(unzip('../../Data/GabrielEtAl2020/Attributes.txt.zip')[1])
+
+load("/data/lungNENomics/work/Descriptive_manuscript_data/MOFA/MOFA.Exp.Meth.Alt.CNV_lungNENomicsCombined/ParetoTI/variables_archetypes_MOFA_LNET.RData") # data also contained in Table S1
+gigascience_attributes = read_tsv("/data/lungNENomics/work/SextonoatesA/Attributes.txt")
+var_LNET$sample_id = as.character(var_LNET$sample_id)
+var_LNET$group = var_LNET$archetype_k4_LF3_label
+
+var_cli = bind_rows(var_LNET, Attributes %>% filter(Histopathology_simplified%in%c("LCNEC","SCLC")) %>% 
+                      mutate(sample_id = Sample_ID, group=Histopathology_simplified) %>% dplyr::select(sample_id,group) )
+var_cli = bind_rows(var_cli,tibble(sample_id=c("LCNEC3T","LCNEC4T"),group="LCNEC") )
+var_cli$type[is.na(var_cli$type)] = var_cli$group[is.na(var_cli$type)]
+
+supraca_table = readxl::read_xlsx("../../Data/Supplementary_Table_S36.xlsx",skip=1,n_max = 19)
+```
+
+
+### Load classification data
+```{r}
+supraca_table = supraca_table %>% dplyr::select(manuscript_id,consensus_pathology,asbestos,driver_mutations,archetype,`supra-carcinoid`)
+for(i in 1:ncol(supraca_table)) supraca_table[[i]] = as.factor(supraca_table[[i]])
+
+supraca_table.long = supraca_table %>% pivot_longer(cols = c(consensus_pathology,asbestos,driver_mutations,archetype,`supra-carcinoid`))
+```
+
+We reorder the variables
+```{r}
+supraca_table.long = supraca_table.long %>% mutate(value=factor(value,levels=c( "Typical","Carcinoid","NA","Atypical","NET G3",
+                                                           "no","yes",
+                                                           "ARID1A (nonsense); BRAF (missense)", "BRAF (missense)", 
+                                                           "ATM (nonsense); MEN1 (nonsense)", "MEN1 (frame shift indel)", 
+                                                           "Ca A1", "sc-enriched", 
+                                                           "FALSE", "TRUE" )), 
+                              name=factor(name,levels=rev(c("archetype","supra-carcinoid","asbestos","consensus_pathology", "driver_mutations"))) )
+```
+
+### Plots
+```{r}
+cols_4A = c(type5[1],type5[3],"NA"="white",type5[2],type5[4],
+            "no","yes",
+            "ARID1A (nonsense); BRAF (missense)", "BRAF (missense)","ATM (nonsense); MEN1 (nonsense)", "MEN1 (frame shift indel)", 
+            arc4[1], arc4[4],
+            "FALSE", "TRUE")
+
+Fig4A <- ggplot(data=supraca_table.long , 
+             aes(x=manuscript_id, y = name,fill=value )) + geom_tile(col="white") +
+  theme_classic() + theme(axis.text.x=element_text(angle = 90,hjust = 1,vjust=0.5))
+  #geom_violin(aes(fill=archetype_k4_LF3_label)) + 
+  #geom_boxplot(fill="white", width=0.1, outlier.size = 0.4) +
+  #scale_fill_manual(name = "Archetype", values=c("Ca A1"="#999933", "Ca A2"="#DDCC77", "Ca B"="#117733", "sc-enriched"="#CC6677")) +
+  #theme_classic() + ylab("MKI67 expression [log10(TPM+1)]") + xlab("Archetype") +
+  #theme(legend.position = "right") +
+  #scale_y_continuous(breaks = c(0,0.5,1,1.5,2), limits=c(0,2.5)) +
+  #guides(color=guide_legend(nrow=1,byrow=TRUE)) + 
+  #geom_segment(aes(x=1,xend=2,y=ylabpos,yend=ylabpos)) +  geom_text(aes(label = "*", y = ylabpos+0.1, x=1.5)) +
+  #geom_segment(aes(x=1,xend=4,y=ylabpos+.3,yend=ylabpos+0.3)) +  geom_text(aes(label = "***", y = ylabpos+0.3+0.1, x=2.5)) +
+  #geom_segment(aes(x=2,xend=4,y=ylabpos+0.3*2,yend=ylabpos+0.3*2)) +  geom_text(aes(label = "***", y = ylabpos+0.3*2+0.1, x=3)) +
+  #geom_segment(aes(x=3,xend=4,y=ylabpos+0.3*3,yend=ylabpos+0.3*3)) +  geom_text(aes(label = "***", y = ylabpos+0.3*3+0.1, x=3.5)) +
+  #theme(axis.text.y=element_text(size=11), axis.text.x=element_text(size=11), 
+  #      axis.title.x=element_text(size=11), axis.title.y=element_text(size=11)) + 
+  #theme(legend.text=element_text(size=11), legend.title=element_text(size=11)) +
+  #labs(title="MKI67 expression by group") + theme(plot.title = element_text(hjust = 0.5)) + xlab("Molecular group") + guides(fill="none")
+
+ggsave("/data/lungNENomics/work/alcalan/Figures/ExtendedDataFig_4D_MKI67.svg",plot = EDF4Dleft,height=2.5,width=2.5)
+```
