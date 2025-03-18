@@ -1,0 +1,183 @@
+---
+title: "ExtendedDataFig3A"
+author: "Laurane Mangé"
+date: "2025-03-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This document produces pannel A from Extended Data Figure 3 from the lungNENomics manuscript, displaying the number of hallmarks of cancer (<https://aacrjournals.org/cancerdiscovery/article/12/1/31/675608/Hallmarks-of-Cancer-New-DimensionsHallmarks-of>) affected by damaging mutations per patient for each archetype. All file paths used are to be modified according to the user's working directory.
+
+## Libraries
+
+The first step of the study is to load the required libraries.
+
+```{r libraries}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(tidyr)
+library(forestmodel)
+library(rlang)
+library(eulerr)
+library(cowplot)
+library(patchwork)
+library(writexl)
+library(jtools)
+```
+
+## Fetching the necessary data
+
+We now load the necessary data for this study : Samples displaying genes with damaging SNV mutations, as well as archetypes for each sample and hallmarks of cancer affected through mutation for each gene.
+
+```{r fetch data}
+# dataframe with hallmarks from COSMIC
+clean_hallmarks <- read_csv("/home/mangel/Hallmarks/Stage IARC/clean_hallmarks_COSMICv99_Intogen2023-05-31.tsv")
+
+clean_hallmarks <- clean_hallmarks %>% dplyr::select(-c(1,11,12,13))
+
+all_hm <- sort(unique(clean_hallmarks$HALLMARK))
+
+# Pareto archetype color palette
+arc4 <- c("Ca A1"="#999933", "Ca A2"="#DDCC77", "Ca B"="#117733", "sc-enriched"="#CC6677", "LCNEC"="#882255", "SCLC"="#332288") 
+### Hallmark profile colors
+hmPalette <- c("#CC0000", "#006666", "#330066", "#CC2266", "#666666", "#003399", "#111111", "#336600", "#663333", "#CC6600")
+
+# dataframe with damaging SNVs
+snv_dmg <- get(load('dataset_snv_dmg_lungNENomicsCombined.RData'))
+unique(snv_dmg$gene1_name)
+unique(snv_dmg$sample_id) #102 samples
+
+dmg_genes_list <- unique(snv_dmg$gene1_name[which(snv_dmg$gene1_name %in% clean_hallmarks$GENE_SYMBOL)])
+# 53 genes from clean_hallmarks (COSMIC)
+
+# Making snv_dmg_arch : dataframe with damaging SNVs and archetypes per sample
+variables_archetypes_MOFA_LNET <- get(load('variables_archetypes_MOFA_LNET.RData')) #319 samples
+
+snv_dmg_arch <- get(load('variables_archetypes_MOFA_LNET.RData'))
+snv_dmg_arch <- merge(snv_dmg_arch, snv_dmg[c('sample_id','gene1_name')], by = 'sample_id')
+snv_dmg_arch <- snv_dmg_arch %>% relocate(gene1_name, .before=Factor1)
+snv_dmg_arch <- snv_dmg_arch %>% relocate(archetype_k4_LF3_label, .before=Factor1)
+snv_dmg_arch <- merge(snv_dmg_arch, clean_hallmarks[c('GENE_SYMBOL','HALLMARK')], by.x = 'gene1_name', by.y = 'GENE_SYMBOL',all=TRUE)
+snv_dmg_arch <- snv_dmg_arch %>% relocate(HALLMARK, .before = Factor1)
+snv_dmg_arch <- snv_dmg_arch %>% dplyr::filter(!is.na(sample_id))
+snv_dmg_arch <- snv_dmg_arch %>% dplyr::filter(!duplicated(snv_dmg_arch))
+snv_dmg_arch <- snv_dmg_arch %>% rename(archetype = archetype_k4_LF3_label)
+unique(snv_dmg_arch$sample_id) # 102 good
+
+```
+
+```{r 53 genes}
+table(snv_dmg_arch$archetype)
+unique(snv_dmg_arch %>% filter(!is.na(HALLMARK)) %>% pull(gene1_name)) # 53 dmg genes with hm affected
+table(snv_dmg_arch$HALLMARK)
+```
+There are 53 genes with damaging SNV mutations that affect at least one of the 10 known hallmarks of cancer.
+
+We now create dataframes in "wide" format giving information about whether a hallmark is affected (1) or not (0) by the mutation of a given gene (first column).
+
+```{r gene_hm.wide}
+gene_hm.wide = snv_dmg_arch[c('gene1_name','HALLMARK')] %>% filter(!duplicated(snv_dmg_arch[c('gene1_name','HALLMARK')])) %>% mutate(Presence=1) %>% 
+  pivot_wider(id_cols = gene1_name, names_from = HALLMARK,values_from = Presence,values_fill = 0,names_expand = TRUE)
+
+Missing <- setdiff(all_hm, names(gene_hm.wide[-1]))
+gene_hm.wide[Missing] <- 0
+gene_hm.wide <- gene_hm.wide[c('gene1_name',sort(colnames(gene_hm.wide[-1])))]
+gene_hm.wide <- gene_hm.wide %>% select(-c("NA"))
+
+```
+
+We can make the same dataframe for archetypes instead of genes.
+
+```{r arch_hm.wide}
+arch_hm.wide = snv_dmg_arch[c('archetype','HALLMARK')] %>% filter(!duplicated(snv_dmg_arch[c('archetype','HALLMARK')])) %>% mutate(Presence=1) %>% 
+  pivot_wider(id_cols = archetype, names_from = HALLMARK,values_from = Presence,values_fill = 0,names_expand = TRUE)
+
+Missing <- setdiff(all_hm, names(arch_hm.wide[-1]))
+arch_hm.wide[Missing] <- 0
+arch_hm.wide <- arch_hm.wide[c('archetype',sort(colnames(arch_hm.wide[-1])))]
+arch_hm.wide <- arch_hm.wide %>% select(-c("NA"))
+```
+
+All 4 archetypes seem to have (almost) all hallmarks affected.
+
+However, the dataframe in "wide" format we will use the most contains the previously mentioned hallmark information per sample (i.e. per patient).
+
+```{r sample_hm.wide}
+table(snv_dmg_arch$archetype,snv_dmg_arch$sample_id)
+length(unique(snv_dmg_arch$sample_id)) # 102 different samples
+
+sample_hm.wide = snv_dmg_arch[c('sample_id','HALLMARK')] %>% filter(!duplicated(snv_dmg_arch[c('sample_id','HALLMARK')])) %>% mutate(Presence=1) %>% 
+  pivot_wider(id_cols = sample_id, names_from = HALLMARK,values_from = Presence,values_fill = 0,names_expand = TRUE)
+
+Missing <- setdiff(all_hm, names(sample_hm.wide[-1]))
+sample_hm.wide[Missing] <- 0
+sample_hm.wide <- sample_hm.wide[c('sample_id',sort(colnames(sample_hm.wide[-1])))]
+
+# samples belonging to each archetype
+sc_samples <- unique(snv_dmg_arch %>% filter(archetype=="sc-enriched") %>% pull(sample_id))
+a1_samples <- unique(snv_dmg_arch %>% filter(archetype=="Ca A1") %>% pull(sample_id))
+a2_samples <- unique(snv_dmg_arch %>% filter(archetype=="Ca A2") %>% pull(sample_id))
+b_samples <- unique(snv_dmg_arch %>% filter(archetype=="Ca B") %>% pull(sample_id))
+
+### fisher tests on hallmarks within archetypes
+
+fish_arch_hm  <- data.frame(matrix(nrow = 0, ncol = 4)) 
+names(fish_arch_hm) <- c('archetype','hm','fisherTestPvalue','fisherTestOddsRatio')
+
+for (i in 1:length(unique(snv_dmg_arch$archetype))) {
+  for(j in 1:length(unique(snv_dmg_arch$HALLMARK)[-1])){
+    fish_arch_hm[nrow(fish_arch_hm)+1, ] <- c(unique(snv_dmg_arch$archetype)[i],unique(snv_dmg_arch$HALLMARK)[j+1],round(fisher.test(table(snv_dmg_arch$archetype==unique(snv_dmg_arch$archetype)[i],snv_dmg_arch$HALLMARK==unique(snv_dmg_arch$HALLMARK)[j+1]))$p.value,3),round(fisher.test(table(snv_dmg_arch$archetype==unique(snv_dmg_arch$archetype)[i],snv_dmg_arch$HALLMARK==unique(snv_dmg_arch$HALLMARK)[j+1]))$estimate,3))
+  }
+}
+
+fish_arch_hm
+fish_arch_hm[which(fish_arch_hm$fisherTestPvalue<=0.05),]
+# signif : Ca A1 angiogenesis more than expected and Ca A2 suppression of growth same
+
+```
+
+Now we plot the distribution of the number of hallmarks affected per patients for each archetype in the form of a violin plot.
+
+```{r violin}
+sample_hm_arch.wide <- merge(sample_hm.wide,snv_dmg_arch[c("sample_id","archetype")],by="sample_id")
+sample_hm_arch.wide <- sample_hm_arch.wide %>% filter(!duplicated(sample_hm_arch.wide))
+
+sample_sizes <- as.data.frame(cbind(unique(sample_hm_arch.wide$archetype),c(length(a1_samples),length(a2_samples),length(b_samples),length(sc_samples))))
+colnames(sample_sizes) <- c("archetype","n")
+sample_sizes$n <- as.numeric(sample_sizes$n)
+
+wilcox.test(rowSums(sample_hm_arch.wide %>% filter(archetype=="Ca A1") %>% select(-c(1,9,13))),rowSums(sample_hm_arch.wide %>% filter(archetype=="Ca A2") %>% select(-c(1,9,13))),paired=FALSE)
+wilcox.test(rowSums(sample_hm_arch.wide %>% filter(archetype=="Ca A1") %>% select(-c(1,9,13))),rowSums(sample_hm_arch.wide %>% filter(archetype=="Ca B") %>% select(-c(1,9,13))),paired=FALSE)
+wilcox.test(rowSums(sample_hm_arch.wide %>% filter(archetype=="Ca A1") %>% select(-c(1,9,13))),rowSums(sample_hm_arch.wide %>% filter(archetype=="sc-enriched") %>% select(-c(1,9,13))),paired=FALSE)
+wilcox.test(rowSums(sample_hm_arch.wide %>% filter(archetype=="Ca A2") %>% select(-c(1,9,13))),rowSums(sample_hm_arch.wide %>% filter(archetype=="Ca B") %>% select(-c(1,9,13))),paired=FALSE)
+wilcox.test(rowSums(sample_hm_arch.wide %>% filter(archetype=="Ca A2") %>% select(-c(1,9,13))),rowSums(sample_hm_arch.wide %>% filter(archetype=="sc-enriched") %>% select(-c(1,9,13))),paired=FALSE)
+wilcox.test(rowSums(sample_hm_arch.wide %>% filter(archetype=="Ca B") %>% select(-c(1,9,13))),rowSums(sample_hm_arch.wide %>% filter(archetype=="sc-enriched") %>% select(-c(1,9,13))),paired=FALSE)
+# sc-enriched diff with every other group
+
+#my_comparisons <- list( c("Ca A1", "Ca A2"), c("Ca A1", "Ca B"), c("Ca A1", "sc-enriched"), c("Ca A2", "Ca B"), c("Ca A2", "sc-enriched"), c("Ca B", "sc-enriched"))
+my_comparisons <- list(c("Ca A1", "sc-enriched"), c("Ca A2", "sc-enriched"), c("Ca B", "sc-enriched"))
+#only these are significant
+
+violin <- ggplot(sample_hm_arch.wide, aes(x=archetype, y=rowSums(sample_hm_arch.wide[,c(2:8,10:12)]), fill=archetype, color=archetype)) + 
+  geom_violin() +
+  geom_boxplot(width=0.15, color="black", fill="white") +
+  geom_dotplot(data=sample_hm_arch.wide %>% filter(archetype=="sc-enriched"),aes(x=archetype,y=rowSums(sample_hm_arch.wide %>% filter(archetype=="sc-enriched") %>% select(c(2:8,10:12)))), binaxis = "y", stackdir='center', color="white") +
+  scale_color_manual(values=arc4) +
+  scale_fill_manual(values=arc4) +
+  scale_y_continuous(breaks = seq(0, 10, by = 1)) +
+  labs(y="Number of hallmarks affected per sample") +
+  geom_text(data = sample_sizes,aes(x=archetype,y=-1,label=n)) +
+  theme_bw() +
+  theme(panel.grid=element_blank(), panel.border = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black")) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1,colour =arc4[(c("Ca A1","Ca A2","Ca B","sc-enriched"))]))
+violin <- violin + stat_compare_means(comparisons = my_comparisons, method = "wilcox.test", label = "p.signif")
+violin
+
+```
