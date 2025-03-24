@@ -1,0 +1,157 @@
+---
+title: "ExtDataFig4D"
+author: "N. Alcala"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Extended Data Figure 4 panel D: Proliferation
+
+This document produces panel D from Extended Data Figure 4 from the lungNENomics manuscript, describing cellular proliferation across the groups.
+
+## Panel D
+
+### Load libraries
+
+```{r pressure, echo=FALSE}
+library(tidyverse)
+library(patchwork)
+library(ggbeeswarm)
+```
+
+### load lungNENomics color schemes
+For now, this only runs locally. Nevertheless, not necessary to run, just provides cosmetics.
+```{r}
+source("/data/lungNENomics/work/Descriptive_manuscript_data/Colour_palettes.R")
+colors_clusters = c("Ca A1"="#999933", "Ca A2"= "#DDCC77", "Ca B"= "#117733", "sc-enriched"="#CC6677",  
+                    "Typical"="#9DB802","Atypical"="#025B0E","undetermined"="#CEDB80",
+                    "LCNEC"="#824833" ,"SCLC"="#000000",
+                    SINET = "#2ad4ffff") #, "Adeno-Ca"="#ff80e5ff", "Squamous-Cell-Ca"="#8080ffff") 
+```
+
+
+### load metadata
+We need to merge the metadata for the LCNEC and SCLC cohorts (data harmonized in Gabriel et al. 2020) with the clinical data from the lungNENomics cohort (in Table S1)
+
+```{r}
+Attributes = read_tsv(unzip('../../Data/GabrielEtAl2020/Attributes.txt.zip')[1])
+
+load("/data/lungNENomics/work/Descriptive_manuscript_data/MOFA/MOFA.Exp.Meth.Alt.CNV_lungNENomicsCombined/ParetoTI/variables_archetypes_MOFA_LNET.RData") # data also contained in Table S1
+gigascience_attributes = read_tsv("/data/lungNENomics/work/SextonoatesA/Attributes.txt")
+var_LNET$sample_id = as.character(var_LNET$sample_id)
+var_LNET$group = var_LNET$archetype_k4_LF3_label
+
+var_cli = bind_rows(var_LNET, Attributes %>% filter(Histopathology_simplified%in%c("LCNEC","SCLC")) %>% 
+                      mutate(sample_id = Sample_ID, group=Histopathology_simplified) %>% dplyr::select(sample_id,group) )
+var_cli = bind_rows(var_cli,tibble(sample_id=c("LCNEC3T","LCNEC4T"),group="LCNEC") )
+var_cli$type[is.na(var_cli$type)] = var_cli$group[is.na(var_cli$type)]
+```
+
+### load expression data
+
+```{r}
+load("/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/gene_TPM_nosex_matrix_PCA_LCNEC_SCLC_ITH_TR.RData") # expression
+load("/data/lungNENomics/work/Descriptive_manuscript_data/MOFA/MOFA.Exp.Meth.Alt.CNV_lungNENomicsCombined/ParetoTI/variables_archetypes_MOFA_LNET.RData")
+ki67.vst <- read.csv(file="/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/vstexpr_MKI67_PCA_LCNEC_SCLC_ITH_TR.csv", row=1)
+load("/data/lungNENomics/work/Descriptive_manuscript_data/gencode_hg38_v33.RData") # annotation
+
+dim(TPM_nosex)
+head(var_LNET)
+table(var_LNET$sample_id, var_LNET$archetype_k4_LF3_label)
+
+TPM_nosex = TPM_nosex[,!colnames(TPM_nosex)%in%c("LNEN246_TU","LNEN251_TU1")]
+
+ki67.tpm = bind_cols( t(TPM_nosex["ENSG00000148773.14",]) ,sample_id =  colnames(TPM_nosex))
+```
+
+We merge the tables and exclude samples without matching RNA-seq
+```{r}
+expr_MKI67_tpm_vst = left_join(ki67.tpm, left_join(ki67.vst,
+                          var_LNET[is.na(var_LNET$RNAseq_batch)==F & is.na(var_LNET$archetype_k4_LF3_label)==F,]  %>% 
+                            dplyr::select(sample_id, archetype_k4_LF3_label,type), by="sample_id") )#
+
+
+expr_MKI67_tpm_vst = expr_MKI67_tpm_vst %>% filter(!sample_id %in%c("LNEN246_TU","LNEN251_TU1") )
+
+# check merge
+which( is.na(expr_MKI67_tpm_vst$ENSG00000148773.14) )
+which( is.na(expr_MKI67_tpm_vst$MKI67_expression) )
+
+colnames(expr_MKI67_tpm_vst)[1] = "MKI67_expression_TPM"
+colnames(expr_MKI67_tpm_vst)[3] = "MKI67_expression_vst"
+```
+
+### Statistical tests
+
+We use vst expression to perform statistical tests, as it is closest to normal
+```{r}
+summary(aov(MKI67_expression_vst ~ archetype_k4_LF3_label, data = expr_MKI67_tpm_vst))[[1]][1,5] # p-value: 9.403244e-10
+
+t.test(expr_MKI67_tpm_vst$MKI67_expression_vst[which(expr_MKI67_tpm_vst$archetype_k4_LF3_label %in% c("Ca A1", "Ca A2"))] ~ 
+         expr_MKI67_tpm_vst$archetype_k4_LF3_label[which(expr_MKI67_tpm_vst$archetype_k4_LF3_label %in% c("Ca A1", "Ca A2"))], alternative = "two.sided") # p-value = 0.03479 *
+t.test(expr_MKI67_tpm_vst$MKI67_expression_vst[which(expr_MKI67_tpm_vst$archetype_k4_LF3_label %in% c("Ca A1", "Ca B"))] ~ 
+         expr_MKI67_tpm_vst$archetype_k4_LF3_label[which(expr_MKI67_tpm_vst$archetype_k4_LF3_label %in% c("Ca A1", "Ca B"))], alternative = "two.sided") # p-value = 0.7354
+t.test(expr_MKI67_tpm_vst$MKI67_expression_vst[which(expr_MKI67_tpm_vst$archetype_k4_LF3_label %in% c("Ca A1", "sc-enriched"))] ~ 
+         expr_MKI67_tpm_vst$archetype_k4_LF3_label[which(expr_MKI67_tpm_vst$archetype_k4_LF3_label %in% c("Ca A1", "sc-enriched"))], alternative = "two.sided") # p-value = 7.331e-07 ***
+
+
+t.test(expr_MKI67_tpm_vst$MKI67_expression_vst[which(expr_MKI67_tpm_vst$archetype_k4_LF3_label %in% c("Ca A2", "Ca B"))] ~ 
+         expr_MKI67_tpm_vst$archetype_k4_LF3_label[which(expr_MKI67_tpm_vst$archetype_k4_LF3_label %in% c("Ca A2", "Ca B"))], alternative = "two.sided") # p-value = 0.2068
+t.test(expr_MKI67_tpm_vst$MKI67_expression_vst[which(expr_MKI67_tpm_vst$archetype_k4_LF3_label %in% c("Ca A2", "sc-enriched"))] ~ 
+         expr_MKI67_tpm_vst$archetype_k4_LF3_label[which(expr_MKI67_tpm_vst$archetype_k4_LF3_label %in% c("Ca A2", "sc-enriched"))], alternative = "two.sided") # p-value = 6.232e-08 ***
+
+t.test(expr_MKI67_tpm_vst$MKI67_expression_vst[which(expr_MKI67_tpm_vst$archetype_k4_LF3_label %in% c("Ca B", "sc-enriched"))] ~ 
+         expr_MKI67_tpm_vst$archetype_k4_LF3_label[which(expr_MKI67_tpm_vst$archetype_k4_LF3_label %in% c("Ca B", "sc-enriched"))], alternative = "two.sided") # p-value = 1.856e-07 ***
+
+# by histological type
+summary(aov(MKI67_expression_vst ~ type, data = expr_MKI67_tpm_vst))[[1]][1,5] # p-value: 1.263021e-16
+
+
+t.test(expr_MKI67_tpm_vst$MKI67_expression_vst[which(expr_MKI67_tpm_vst$type %in% c("Typical", "Atypical"))] ~ 
+         expr_MKI67_tpm_vst$type[which(expr_MKI67_tpm_vst$type %in% c("Typical", "Atypical"))], alternative = "two.sided")$p.value # p-value = 8.493567e-17 ***
+t.test(expr_MKI67_tpm_vst$MKI67_expression_vst[which(expr_MKI67_tpm_vst$type %in% c("Typical", "Carcinoid"))] ~ 
+         expr_MKI67_tpm_vst$type[which(expr_MKI67_tpm_vst$type %in% c("Typical", "Carcinoid"))], alternative = "two.sided") # p-value = 0.04355 *
+t.test(expr_MKI67_tpm_vst$MKI67_expression_vst[which(expr_MKI67_tpm_vst$type %in% c("Typical", "NET G3"))] ~ 
+         expr_MKI67_tpm_vst$type[which(expr_MKI67_tpm_vst$type %in% c("Typical", "NET G3"))], alternative = "two.sided") # p-value = 0.4254
+
+t.test(expr_MKI67_tpm_vst$MKI67_expression_vst[which(expr_MKI67_tpm_vst$type %in% c("Atypical", "Carcinoid"))] ~ 
+         expr_MKI67_tpm_vst$type[which(expr_MKI67_tpm_vst$type %in% c("Atypical", "Carcinoid"))], alternative = "two.sided") # p-value = 6.268e-05 ***
+t.test(expr_MKI67_tpm_vst$MKI67_expression_vst[which(expr_MKI67_tpm_vst$type %in% c("Atypical", "NET G3"))] ~ 
+         expr_MKI67_tpm_vst$type[which(expr_MKI67_tpm_vst$type %in% c("Atypical", "NET G3"))], alternative = "two.sided") # p-value = 0.7738
+
+t.test(expr_MKI67_tpm_vst$MKI67_expression_vst[which(expr_MKI67_tpm_vst$type %in% c("Carcinoid", "NET G3"))] ~ 
+         expr_MKI67_tpm_vst$type[which(expr_MKI67_tpm_vst$type %in% c("Carcinoid", "NET G3"))], alternative = "two.sided") # p-value = 0.5014 
+
+mean(expr_MKI67_tpm_vst$MKI67_expression_vst[which(expr_MKI67_tpm_vst$type=="Typical")], na.rm=TRUE) # 7.999174
+mean(expr_MKI67_tpm_vst$MKI67_expression_vst[which(expr_MKI67_tpm_vst$type=="Atypical")], na.rm=TRUE) # 9.875885
+mean(expr_MKI67_tpm_vst$MKI67_expression_vst[which(expr_MKI67_tpm_vst$type=="Carcinoid")], na.rm=TRUE) # 8.575349
+mean(expr_MKI67_tpm_vst$MKI67_expression_vst[which(expr_MKI67_tpm_vst$type=="NET G3")], na.rm=TRUE) # 10.65458
+```
+
+### Plots
+```{r}
+ylabpos = 1.4
+EDF4Dleft <- ggplot(data=expr_MKI67_tpm_vst %>% filter(!is.na(archetype_k4_LF3_label)), 
+             aes(x=archetype_k4_LF3_label, y = log10(MKI67_expression_TPM+1) )) +
+  geom_violin(aes(fill=archetype_k4_LF3_label)) + 
+  geom_boxplot(fill="white", width=0.1, outlier.size = 0.4) +
+  scale_fill_manual(name = "Archetype", values=c("Ca A1"="#999933", "Ca A2"="#DDCC77", "Ca B"="#117733", "sc-enriched"="#CC6677")) +
+  theme_classic() + ylab("MKI67 expression [log10(TPM+1)]") + xlab("Archetype") +
+  theme(legend.position = "right") +
+  scale_y_continuous(breaks = c(0,0.5,1,1.5,2), limits=c(0,2.5)) +
+  guides(color=guide_legend(nrow=1,byrow=TRUE)) + 
+  geom_segment(aes(x=1,xend=2,y=ylabpos,yend=ylabpos)) +  geom_text(aes(label = "*", y = ylabpos+0.1, x=1.5)) +
+  geom_segment(aes(x=1,xend=4,y=ylabpos+.3,yend=ylabpos+0.3)) +  geom_text(aes(label = "***", y = ylabpos+0.3+0.1, x=2.5)) +
+  geom_segment(aes(x=2,xend=4,y=ylabpos+0.3*2,yend=ylabpos+0.3*2)) +  geom_text(aes(label = "***", y = ylabpos+0.3*2+0.1, x=3)) +
+  geom_segment(aes(x=3,xend=4,y=ylabpos+0.3*3,yend=ylabpos+0.3*3)) +  geom_text(aes(label = "***", y = ylabpos+0.3*3+0.1, x=3.5)) +
+  #geom_text(aes(label = "n=109", y = 1, x=1),color="black",size=5) + 
+  #geom_text(aes(label = "n=89", y = 1, x=2),color="black",size=5) + 
+  #geom_text(aes(label = "n=62", y = 1, x=3),color="black",size=5) + 
+  #geom_text(aes(label = "n=13", y = 1, x=4),color="black",size=5) +
+  theme(axis.text.y=element_text(size=11), axis.text.x=element_text(size=11), 
+        axis.title.x=element_text(size=11), axis.title.y=element_text(size=11)) + 
+  theme(legend.text=element_text(size=11), legend.title=element_text(size=11)) +
+  labs(title="MKI67 expression by group") + theme(plot.title = element_text(hjust = 0.5)) + xlab("Molecular group") + guides(fill="none")
+
+ggsave("/data/lungNENomics/work/alcalan/Figures/ExtendedDataFig_4D_MKI67.svg",plot = EDF4Dleft,height=2.5,width=2.5)
+```

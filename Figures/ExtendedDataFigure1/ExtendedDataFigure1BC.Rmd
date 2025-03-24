@@ -32,7 +32,7 @@ colors_clusters = c("Ca A1"="#999933", "Ca A2"= "#DDCC77", "Ca B"= "#117733", "s
 
 
 ### Prepare the deconvolution
-We get cell expression signature matrices
+We get cell expression signature matrices for the different methods
 ```{r}
 # the quantiseq TIL10 signature
 TIL10 = read_tsv( system.file("extdata", paste0("TIL10","_signature.txt"), package = "quantiseqr", mustWork = TRUE) )
@@ -68,13 +68,15 @@ var_cli = bind_rows(var_cli,tibble(sample_id=c("LCNEC3T","LCNEC4T"),group="LCNEC
 ```
 
 ### load expression data
-
+We exclude 2 samples with swapped data
 ```{r}
 expr = load("/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/gene_TPM_matrix_PCA_LCNEC_SCLC_ITH_TR.RData")
 annot <- load("/data/lungNENomics/work/Descriptive_manuscript_data/gencode_hg38_v33.RData")
 gene_TPM_matrix = left_join(gene_TPM_matrix,ref.33.gene %>% dplyr::select(gene_id,gene_name) ) %>% relocate(gene_name , .after=gene_id)
 
 gene_TPM_matrix.df = as.data.frame(gene_TPM_matrix[,-(1:2)],row.names = gene_TPM_matrix$gene_name)
+
+gene_TPM_matrix.df = gene_TPM_matrix.df[, ! colnames(gene_TPM_matrix.df) %in%c("LNEN246_TU","LNEN251_TU1") ]
 ```
 
 ### Load quantiseq data
@@ -87,10 +89,12 @@ colnames(quantiseq)[2:12] = c( "B cell","Macrophage M1","Macrophage M2","Monocyt
 
 quantiseq = quantiseq %>% pivot_longer(cols = `B cell`:`uncharacterized cell`,names_to = "cell_type",values_to = "proportion") %>% 
   pivot_wider(id_cols=-group,names_from = sample_id,values_from=proportion)
+
+quantiseq = quantiseq[, ! colnames(quantiseq) %in%c("LNEN246_TU","LNEN251_TU1") ]
 ```
 
 ### Load music deconvolution data
-Because we used music on a custom single-cell reference from collaborators at EMBL Barcelona, we do not perform the computation here and just load the results
+Because we used music on a custom single-cell reference from collaborators at EMBL Barcelona, we do not perform the computation here and just load the results. The 2 problematic samples were already excluded
 ```{r}
 music = read_csv("/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/music_deconvoluted_cell_proportions_data.csv")
 
@@ -172,12 +176,12 @@ We now plot the results
 ggimmune = ggplot(immune_scores.long %>% filter(!group%in%c("LCNEC","SCLC"),!is.na(group)), aes(x=Method,y=Score,fill=group) ) + 
   geom_violin(col=NA) +   geom_boxplot(width=0.1,fill="white") + #geom_beeswarm(col="white",shape=21,size=1)+ 
   geom_hline(data=immune_scores.mean %>% filter(!group%in%c("LCNEC","SCLC"),!is.na(group)),aes(yintercept=Score)) + 
-  theme_classic() + scale_fill_manual(values=c(arc4,type5)) +ylab("Immune score")+xlab("") + guides(fill="none") + facet_wrap(.~group) + 
+  theme_classic() + scale_fill_manual(values=c(arc4,type5)) +ylab("Immune score")+xlab("") + guides(fill="none") + facet_grid(.~group) + 
   theme(axis.text.x = element_text(angle=90,hjust = 1,vjust=0.5))
 
 ggimmune
 
-ggsave(filename="/data/lungNENomics/work/alcalan/Figures/ExtendedDataFig_1B_Immune.svg",ggimmune,height =2.5*2,width=3*2)
+ggsave(filename="/data/lungNENomics/work/alcalan/Figures/ExtendedDataFig_1B_Immune.svg",ggimmune,height =2.5,width=1.5*2)
 ```
 
 Save scores to a table for supplementary files
