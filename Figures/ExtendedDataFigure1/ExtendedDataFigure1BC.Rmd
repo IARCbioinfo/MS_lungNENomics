@@ -166,6 +166,7 @@ immune_scores.long = left_join(immune_scores.long,var_cli %>% dplyr::select(samp
 We compute averages across methods, and compare them statistically. Because each sample has estimates from several methods, we use a hierarchical model with a random intercept.
 ```{r}
 library(lme4)
+library(lmerTest)
 immune_scores.mean = immune_scores.long %>% group_by(group) %>% summarize(Score = mean(Score,na.rm=T))
 
 summary(lmer(Score~group + Method + (1|Sample),data=immune_scores.long))
