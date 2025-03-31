@@ -1,0 +1,229 @@
+---
+title: "Fig2B.Rmd"
+author: "Alcala"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Figure 2 panel B: expression of MEN1 among groups
+
+This document produces panel B from Figure 2 from the lungNENomics manuscript, displaying the expression of MEN1 as a function of the group.
+
+### Load libraries
+
+```{r pressure, echo=FALSE}
+library(tidyverse)
+library(patchwork)
+library(ggbeeswarm)
+library(ggpubr)
+```
+
+# Load Data
+
+We load the expression in TPM unit, annotation, and clinical variables. We exclude samples LNEN246 and 251 which did not have expression data : 
+```{r}
+load("/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/gene_TPM_nosex_matrix_PCA_LCNEC_SCLC_ITH_TR.RData") # expression
+load("/data/lungNENomics/work/Descriptive_manuscript_data/MOFA/MOFA.Exp.Meth.Alt.CNV_lungNENomicsCombined/ParetoTI/variables_archetypes_MOFA_LNET.RData")
+load("/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/vst_expr_matrix_PCA_LCNEC_SCLC_ITH_TR.RData")
+load("/data/lungNENomics/work/Descriptive_manuscript_data/gencode_hg38_v33.RData") # annotation
+
+dim(TPM_nosex)
+head(var_LNET)
+table(var_LNET$sample_id, var_LNET$archetype_k4_LF3_label)
+
+TPM_nosex = TPM_nosex[,!colnames(TPM_nosex)%in%c("LNEN246_TU","LNEN251_TU1")]
+tpm <- as.data.frame(t(TPM_nosex))
+
+vst_expr_matrix = vst_expr_matrix[,!colnames(vst_expr_matrix)%in%c("LNEN246_TU","LNEN251_TU1")]
+vst <- as.data.frame(t(vst_expr_matrix))
+```
+
+### load lungNENomics color schemes
+For now, this only runs locally. Nevertheless, not necessary to run, just provides cosmetics.
+```{r}
+source("/data/lungNENomics/work/Descriptive_manuscript_data/Colour_palettes.R")
+```
+
+We load the genomic data (CNVs and small variants; no SVs were detected in MEN1)
+```{r}
+load("/data/lungNENomics/work/Descriptive_manuscript_data/Copy_number_data/cn_value_by_gene_table_PCA_LCNEC_ITH.RData")
+head(cn_value_table)
+
+CNVs_MEN1 = cn_value_table %>% filter(gene_name=="MEN1")
+CNVs_MEN1 = tibble(sample_id=colnames(CNVs_MEN1)[-1],CN=as.character(CNVs_MEN1[-1]))
+
+load("/data/lungNENomics/work/Descriptive_manuscript_data/WGS_data/dataset_snv_dmg_maf_lungNENomicsCombined_LCNEC.RData")
+head(dataset_snv_dmg_maf)
+
+smallvars_MEN1 = dataset_snv_dmg_maf %>% filter(Gene.refGene=="MEN1")
+```
+
+# plots
+
+## Data preparation
+```{r}
+MEN1_id = ref.33.gene$gene_id[which(ref.33.gene$gene_name=="MEN1")]
+
+expr_gene_tmp_vst <- data.frame("sample_id" = rownames(vst),
+                                "MEN1_vst" = vst[,colnames(vst) == MEN1_id],
+                                "MEN1_tpm" = tpm[,colnames(tpm)==MEN1_id ] 
+                               )
+expr_gene_tmp_vst = merge(expr_gene_tmp_vst,
+                          var_LNET[is.na(var_LNET$RNAseq_batch)==F & is.na(var_LNET$archetype_k4_LF3_label)==F,]  %>% 
+                            dplyr::select(sample_id, archetype_k4_LF3_label,omics_group), by="sample_id")#
+expr_gene_tmp_vst[, grep("_tpm$", colnames(expr_gene_tmp_vst))] <- log2(expr_gene_tmp_vst[, grep("_tpm$", colnames(expr_gene_tmp_vst))] + 1)
+
+expr_gene_tmp_vst = left_join(expr_gene_tmp_vst, smallvars_MEN1 %>% dplyr::select(sample_id,Func.refGene), by="sample_id")
+expr_gene_tmp_vst = left_join(expr_gene_tmp_vst, CNVs_MEN1, by="sample_id") 
+
+expr_gene_tmp_vst = expr_gene_tmp_vst %>% mutate(Func.refGene = case_when(is.na(Func.refGene) & str_detect(omics_group,"WGS")~"WT",
+                                                      TRUE~Func.refGene),
+                                                 CNsimp = case_when(CN%in%c("2","3","4","5","6","7","8","9","10")~"≥2",
+                                                                    TRUE~CN) )
+
+expr_gene_tmp_vst$MEN1_gt = factor(paste(expr_gene_tmp_vst$Func.refGene,expr_gene_tmp_vst$CNsimp,sep=";"),
+                                   levels = rev(c("splicing;1", "exonic;1","splicing;≥2","exonic;nLOH", "WT;1","WT;nLOH","WT;≥2")) )
+
+expr_gene_tmp_vst$CNsimp = factor(expr_gene_tmp_vst$CNsimp,levels=c("≥2","nLOH","1"))
+```
+
+Double check that we have genomic values for all samples in WGS groups
+```{r}
+table(expr_gene_tmp_vst$CN,expr_gene_tmp_vst$omics_group) # all good, only CNVs in WGS groups
+table(expr_gene_tmp_vst$Func.refGene,expr_gene_tmp_vst$omics_group) # all good, only variants in WGS groups
+```
+
+## MEN1 expression across groups
+We now plot the expression in TPM, using the VST values for statistical testing using linear models (t-tests and ANOVA).
+```{r}
+p_MEN1_archetype <- ggplot(data=expr_gene_tmp_vst, aes(x=archetype_k4_LF3_label, y=log10(MEN1_tpm+1), fill=archetype_k4_LF3_label)) +
+  geom_violin(scale = "width") + geom_boxplot(width=0.1,fill="white") +
+  geom_quasirandom(shape=21, col="white",data=expr_gene_tmp_vst %>% filter(archetype_k4_LF3_label =="sc-enriched")) +
+  scale_fill_manual(values=c(arc4)) + geom_hline(yintercept = log10(1+1),linetype="dashed") + 
+  stat_compare_means(
+    comparisons=list(
+      c("Ca A1", "Ca A2"),
+      c("Ca A1", "Ca B"),
+      c("Ca A1", "sc-enriched"),
+      c("Ca A2", "Ca B"),
+      c("Ca A2", "sc-enriched"),
+      c("Ca B", "sc-enriched")
+    ),
+    method="t.test",
+    label="p.signif",
+    hide.ns=TRUE,
+    tip.length=0,
+    step.increase=0.01,
+    mapping=aes(y=MEN1_vst),label.y = 0.3 # Specify MEN1_vst for statistical comparisons
+  ) +
+  stat_compare_means(method="anova", label.y=max(log10(expr_gene_tmp_vst$MEN1_tpm+1), na.rm=TRUE)+0.5, mapping=aes(y=MEN1_vst)) + # Use MEN1_vst for ANOVA
+  theme_classic() + ylab("MEN1") +
+  theme(legend.position="bottom",legend.title=element_blank(),axis.title.x=element_blank())+
+  scale_y_continuous(breaks=c(0,log10(1+1), log10(1+5), log10(1+10)),labels = c(0,1,5,10)) + 
+  guides(fill="none")
+```
+
+
+## Tests
+```{r}
+summary(lm(MEN1_vst~Func.refGene+CNsimp,data=expr_gene_tmp_vst)) #only CN=1 has impact on expression, alterations do not
+summary(lm(MEN1_vst~Func.refGene+CNsimp+archetype_k4_LF3_label,data=expr_gene_tmp_vst)) #only CN=1 has impact on expression, alterations do not nor do groups
+summary(lm(MEN1_vst~CNsimp+archetype_k4_LF3_label,data=expr_gene_tmp_vst)) #only CN=1 has impact on expression, alterations do not nor do groups
+anova(lm(MEN1_vst~archetype_k4_LF3_label,data=expr_gene_tmp_vst %>% filter(CNsimp=="≥2") )) #among WT, B even slightly higher than A1
+anova(lm(MEN1_vst~archetype_k4_LF3_label,data=expr_gene_tmp_vst %>% filter(CNsimp=="≥2",Func.refGene!="splicing") )) #among WT, B even slightly higher than A1
+```
+
+
+```{r}
+p_MEN1_variants <- ggplot(data=expr_gene_tmp_vst %>% filter(str_detect(omics_group,"WGS") ), 
+                          aes(x=MEN1_gt, y=log10(MEN1_tpm+1), fill=MEN1_gt)) +
+  geom_violin(scale = "width") + geom_boxplot(width=0.1,fill="white") +
+  geom_quasirandom(shape=21, col="white",aes(fill=archetype_k4_LF3_label)) +
+  scale_fill_manual(values=c(arc4)) + geom_hline(yintercept = log10(1+1),linetype="dashed") + 
+  stat_compare_means(
+    comparisons=list(
+      c("exonic;1", "WT;1"),
+      c("exonic;1", "WT;nLOH"),
+      c("exonic;1", "WT;≥2")
+      #c("Ca A1", "Ca B"),
+      #c("Ca A1", "sc-enriched"),
+      #c("Ca A2", "Ca B"),
+      #c("Ca A2", "sc-enriched"),
+      #c("Ca B", "sc-enriched")
+    ),
+    method="wilcox.test",
+    label="p.signif",
+    hide.ns=TRUE,
+    tip.length=0,
+    step.increase=0.01,
+    mapping=aes(y=MEN1_vst),label.y = 0.3 # Specify MEN1_vst for statistical comparisons
+  ) +
+  stat_compare_means(method="anova", label.y=max(log10(expr_gene_tmp_vst$MEN1_tpm+1), na.rm=TRUE)+0.5, mapping=aes(y=MEN1_vst)) + # Use MEN1_vst for ANOVA
+  theme_classic() + ylab("MEN1") +
+  theme(legend.position="bottom",legend.title=element_blank(),axis.title.x=element_blank())+
+  scale_y_continuous(breaks=c(0,log10(1+1), log10(1+5), log10(1+10)),labels = c(0,1,5,10)) + 
+  guides(fill="none")
+
+expr_gene_tmp_vst %>% mutate(CNsimp=factor(CNsimp,levels=c("","nLOH","1")))
+
+p_MEN1_CNVs <- ggplot(data=expr_gene_tmp_vst %>% filter(str_detect(omics_group,"WGS") ), 
+                          aes(x=CNsimp, y=log10(MEN1_tpm+1), fill=CNsimp)) +
+  geom_violin(scale = "width") + geom_boxplot(width=0.1,fill="white") +
+  geom_quasirandom(col="white",aes(fill=archetype_k4_LF3_label,shape=Func.refGene)) +
+  scale_fill_manual(values=c(arc4)) + 
+  stat_compare_means(
+    comparisons=list(
+      c("nLOH", "≥2"),
+      c("1", "≥2"),
+      c("1", "nLOH")
+    ),
+    method="t.test",
+    label="p.signif",
+    hide.ns=TRUE,
+    tip.length=0,
+    step.increase=0.01,
+    mapping=aes(y=MEN1_vst),label.y = 0.3 # Specify MEN1_vst for statistical comparisons
+  ) +
+  stat_compare_means(method="anova", label.y=log10(6), mapping=aes(y=MEN1_vst)) + # Use MEN1_vst for ANOVA
+  theme_classic() + ylab("MEN1 gene expression") +
+  theme(legend.position="bottom",legend.title=element_blank(),axis.title.x=element_blank())+
+  scale_y_continuous(limits = c(0.3,log10(6)+1)) +  #breaks=c(0,log10(1+1), log10(1+5), log10(1+10)),labels = c(0,1,5,10),
+  scale_shape_manual(values=c("WT"=21,"splicing"=23,"exonic"=24)) #+ guides(fill="none")
+
+
+p_MEN1_WT_groups <- ggplot(data=expr_gene_tmp_vst %>% filter(CNsimp=="≥2",,str_detect(omics_group,"WGS") ), # slight signif driven by splicing variants
+                          aes(x=archetype_k4_LF3_label, y=log10(MEN1_tpm+1), fill=archetype_k4_LF3_label)) +
+  geom_violin(scale = "width") + geom_boxplot(width=0.1,fill="white") +
+  geom_quasirandom(col="white",aes(fill=archetype_k4_LF3_label,shape=Func.refGene)) +
+  scale_fill_manual(values=c(arc4)) +
+  stat_compare_means(
+    comparisons=list(
+      c("Ca A1", "Ca A2"),
+      c("Ca A1", "Ca B"),
+      c("Ca A1", "sc-enriched"),
+      c("Ca A2", "Ca B"),
+      c("Ca A2", "sc-enriched"),
+      c("Ca B", "sc-enriched")
+    ),
+    method="t.test",
+    label="p.signif",
+    hide.ns=TRUE,
+    tip.length=0,
+    step.increase=0.01,
+    mapping=aes(y=MEN1_vst),label.y = 0.3 # Specify MEN1_vst for statistical comparisons
+  ) +
+  stat_compare_means(method="anova", label.y=log10(6), mapping=aes(y=MEN1_vst)) + # Use MEN1_vst for ANOVA
+  theme_classic() + ylab("MEN1 gene expression") +
+  theme(legend.position="bottom",legend.title=element_blank(),axis.title.x=element_blank())+
+  scale_y_continuous(limits = c(0.3,log10(6)+1)) + #breaks=c(0,log10(1+1), log10(1+5), log10(1+10)),labels = c(0,1,5,10),
+  scale_shape_manual(values=c("WT"=21,"splicing"=23,"exonic"=24)) + 
+  guides(fill="none")
+
+p_MEN1_WT_groups + p_MEN1_CNVs
+
+ggsave("../../../Figures/Figure_2bright_boxplot_MEN1_log.svg",p_MEN1_WT_groups + p_MEN1_CNVs, width=2.7*1.2, height=5.5*1.2)
+```
