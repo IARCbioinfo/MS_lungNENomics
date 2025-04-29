@@ -67,7 +67,7 @@ music = music %>% pivot_longer(cols = `T_conv`:`Neuroendocrine NEUROD1+`,names_t
 We first format the data
 ```{r}
 music.long = music %>% pivot_longer(cols=LNEN002:LNEN278s2_TU3,names_to = "Sample",values_to = "Proportion",values_drop_na = F)
-music.long = left_join(music.long,var_cli %>% dplyr::select(sample_id,group),by=c(Sample="sample_id")) %>% filter(!is.na(Proportion))
+music.long = left_join(music.long,var_cli %>% dplyr::select(sample_id,group,K4_A1_proportion,K4_A2_proportion,K4_B_proportion,K4_sce_proportion),by=c(Sample="sample_id")) %>% filter(!is.na(Proportion))
 music.long = music.long %>% mutate(cell_type_coarse = case_when(str_detect(cell_type,"Neuroendocrine|Lower|Basal|Club|NE|Goblet")~cell_type,
                                                     str_detect(cell_type,"B|DC|Macrophage|Monocyte|T_|NK|Mast|Myeloid")~"Immune",
                                                     str_detect(cell_type,"ibro")~"Stromal",
@@ -82,9 +82,7 @@ We exclude 2 samples with mismatched RNA-seq data
 ```{r}
 music.long = music.long %>% filter(!Sample %in%c("LNEN246_TU","LNEN251_TU1") )
 
-
 length( var_cli$sample_id[!is.na(var_cli$RNAseq_batch) & !is.na(var_cli$group) ] ) #273 samples 
-
 all( var_cli$sample_id[!is.na(var_cli$RNAseq_batch) & !is.na(var_cli$group) ] %in% music.long$Sample ) # all 273 samples are there
 ```
 
@@ -189,7 +187,7 @@ music.long.NE = music.long %>% filter(!is.na(group),cell_type_coarse %in% c("Low
 Fig4B = ggplot(music.long.NE, aes(x=group,y=Proportion,fill=group)) + 
   geom_violin(col=NA,scale = "width") +   geom_boxplot(width=0.2,fill="white") + #geom_beeswarm(col="white",shape=21,size=1)+ 
   geom_quasirandom(col="white", shape=21, aes(fill=group),data = music.long.NE %>% filter(group=="sc-enriched") ) +
-  theme_classic() + scale_fill_manual(values=c(arc4,type5)) +ylab("Proportion")+xlab("") + guides(fill="none") + facet_wrap(.~cell_type_coarse,nrow = 2,ncol=3) + 
+  scale_fill_manual(values=c(arc4,type5)) +ylab("Proportion")+xlab("") + guides(fill="none") + facet_wrap(.~cell_type_coarse,nrow = 2,ncol=3) + 
   theme(axis.text.x = element_text(angle=90,hjust = 1,vjust=0.5)) + scale_y_continuous(breaks = c(0,0.2,0.4,0.6,0.8)) +
   stat_compare_means(comparisons=list(
       c("Ca A1", "Ca A2"),c("Ca A1", "Ca B"),c("Ca A1", "sc-enriched"),#c("Ca A1", "LCNEC"),c("Ca A1", "SCLC"), # remove from plots comparisons with LCNEC and SCLC to avoid overcrowding display, check table for results
@@ -289,4 +287,44 @@ music.pairwise.test.tables%>% filter(q.value < 0.05)
 
 write_tsv(music.pairwise.test.tables,file = "Table_S_music_deconv_pairwise_tests.tsv")
 write_tsv(music.test.tables,file = "Table_S_music_deconv_global_tests.tsv")
+```
+
+## Cell type proportions as functions of archetype proportions
+```{r}
+music.pairwise.cortest.tables = tibble()
+
+for(x in levels(music.long$cell_type_coarse) ){
+  music.tmp = music.long %>% filter(cell_type_coarse==x)
+  music.pairwise.cortest.tables = bind_rows(music.pairwise.cortest.tables,
+                                            bind_cols(group="Ca A1",Cell_type=x,tidy(cor.test( music.tmp$Proportion, music.tmp$K4_A1_proportion,method = "spearman")) ),
+                                            bind_cols(group="Ca A2",Cell_type=x,tidy(cor.test( music.tmp$Proportion, music.tmp$K4_A2_proportion,method = "spearman")) ),
+                                            bind_cols(group="Ca B",Cell_type=x,tidy(cor.test( music.tmp$Proportion, music.tmp$K4_B_proportion,method = "spearman")) ),
+                                            bind_cols(group="sc-enriched",Cell_type=x,tidy(cor.test( music.tmp$Proportion, music.tmp$K4_sce_proportion,method = "spearman")) )
+                                            )
+}
+
+music.pairwise.cortest.tables = music.pairwise.cortest.tables %>% group_by(group) %>% mutate(q.value = p.adjust(p.value,method="BH"))
+
+music.pairwise.cortest.tables %>% filter(q.value < 0.05)
+
+write_tsv(music.pairwise.cortest.tables,file = "Table_S_music_deconv_pairwise_cortests.tsv")
+```
+
+Plots of significant correlations:
+```{r}
+ggplot(music.long %>% filter(cell_type=="Neuroendocrine NEUROD1+"), aes(x=K4_A1_proportion,y=Proportion,fill=group)) + geom_point(pch=21,col="white") + 
+  geom_smooth(mapping = aes(fill=NULL),show.legend = F) + 
+  scale_fill_manual(values=c(arc4,type5)) +ylab("Proportion")+xlab("") + guides(fill="none") + facet_wrap(.~cell_type_coarse,nrow = 2,ncol=3) + 
+  theme_classic()
+
+ggplot(music.long %>% filter(cell_type=="Club"), aes(x=K4_B_proportion,y=Proportion,fill=group)) + geom_point(pch=21,col="white") + geom_smooth(mapping = aes(fill=NULL),show.legend = F) + 
+  scale_fill_manual(values=c(arc4,type5)) +ylab("Proportion")+xlab("") + guides(fill="none") + facet_wrap(.~cell_type_coarse,nrow = 2,ncol=3) + 
+  theme_classic()
+
+ggplot(music.long %>% filter(cell_type=="Lower Airway Progenitor"), aes(x=K4_sce_proportion,y=Proportion,fill=group)) + geom_point(pch=21,col="white") + 
+  geom_smooth(mapping = aes(fill=NULL),show.legend = F) + 
+  scale_fill_manual(values=c(arc4,type5)) +ylab("Proportion")+xlab("") + guides(fill="none") + facet_wrap(.~cell_type_coarse,nrow = 2,ncol=3) + 
+  theme_classic()
+
+
 ```
