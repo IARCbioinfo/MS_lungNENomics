@@ -1,0 +1,292 @@
+---
+title: "Fig4AB"
+author: "N. Alcala"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Figure 4 panels A and B: single-cell deconvolution
+
+This document produces pannels A and B from Figure 4 from the lungNENomics manuscript, describing the deconvolution of bulk RNA-seq data with a single-cell reference.
+
+## Panel A
+
+### Load libraries
+
+```{r pressure, echo=FALSE}
+library(tidyverse)
+library(patchwork)
+library(ggbeeswarm)
+library(ggpubr)
+```
+
+### load lungNENomics color schemes
+For now, this only runs locally. Nevertheless, not necessary to run, just provides cosmetics.
+```{r}
+source("/data/lungNENomics/work/Descriptive_manuscript_data/Colour_palettes.R")
+colors_clusters = c("Ca A1"="#999933", "Ca A2"= "#DDCC77", "Ca B"= "#117733", "sc-enriched"="#CC6677",  
+                    "Typical"="#9DB802","Atypical"="#025B0E","undetermined"="#CEDB80",
+                    "LCNEC"="#824833" ,"SCLC"="#000000",
+                    SINET = "#2ad4ffff") #, "Adeno-Ca"="#ff80e5ff", "Squamous-Cell-Ca"="#8080ffff") 
+
+colors_cells = c("Lower Airway Progenitor"="#732200ff", "Neuroendocrine NEUROD1+"= "#ff9955ff", "Neuroendocrine CALCA+"= "#c87137ff",
+                 "Club"="#1154ffff", Goblet = "#9264ffff", "Basal" = "#2ad4ffff",
+                 "NE early 1"="#CC6677","NE early 2"="#deaa87ff",
+                 "Vascular"="#ff8080ff", "Epithelial"="#87deaaff" ,"Immune"="#c837abff", Stromal = "#b7b7c8ff") 
+```
+
+
+### load metadata
+We need to merge the metadata for the LCNEC and SCLC cohorts (data harmonized in Gabriel et al. 2020) with the clinical data from the lungNENomics cohort (in Table S1)
+
+```{r}
+Attributes = read_tsv(unzip('../../Data/GabrielEtAl2020/Attributes.txt.zip')[1])
+
+load("/data/lungNENomics/work/Descriptive_manuscript_data/MOFA/MOFA.Exp.Meth.Alt.CNV_lungNENomicsCombined/ParetoTI/variables_archetypes_MOFA_LNET.RData") # data also contained in Table S1
+gigascience_attributes = read_tsv("/data/lungNENomics/work/SextonoatesA/Attributes.txt")
+var_LNET$sample_id = as.character(var_LNET$sample_id)
+var_LNET$group = var_LNET$archetype_k4_LF3_label
+
+var_cli = bind_rows(var_LNET, Attributes %>% filter(Histopathology_simplified%in%c("LCNEC","SCLC")) %>% 
+                      mutate(sample_id = Sample_ID, group=Histopathology_simplified) %>% dplyr::select(sample_id,group) )
+var_cli = bind_rows(var_cli,tibble(sample_id=c("LCNEC3T","LCNEC4T"),group="LCNEC") )
+#write_tsv(var_cli,file = "var_cli_09052024.tsv")
+```
+
+### Load music deconvolution data
+Because we used music on a custom single-cell reference from collaborators at EMBL Barcelona, we do not perform the computation here and just load the results
+```{r}
+music = read_csv("/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/Music_deconvolution_Noah/proportions_data_NENs.csv")#music_deconvoluted_cell_proportions_data.csv")
+
+music = music %>% pivot_longer(cols = `T_conv`:`Neuroendocrine NEUROD1+`,names_to = "cell_type",values_to = "proportion") %>% 
+    pivot_wider(names_from = Sample,values_from=proportion)
+```
+
+
+### Plot the results
+We first format the data
+```{r}
+music.long = music %>% pivot_longer(cols=LNEN002:LNEN278s2_TU3,names_to = "Sample",values_to = "Proportion",values_drop_na = F)
+music.long = left_join(music.long,var_cli %>% dplyr::select(sample_id,group),by=c(Sample="sample_id")) %>% filter(!is.na(Proportion))
+music.long = music.long %>% mutate(cell_type_coarse = case_when(str_detect(cell_type,"Neuroendocrine|Lower|Basal|Club|NE|Goblet")~cell_type,
+                                                    str_detect(cell_type,"B|DC|Macrophage|Monocyte|T_|NK|Mast|Myeloid")~"Immune",
+                                                    str_detect(cell_type,"ibro")~"Stromal",
+                                                    str_detect(cell_type,"Multiciliated|Muscle_Airway")~"Other",
+                                                    str_detect(cell_type,"Endothelial|Pericyte|Plasma|ascular|ymphatic")~"Vascular") )
+
+# check merge 
+music.long[is.na(music.long$group),] %>% pull(Sample) %>% unique()
+```
+
+We exclude 2 samples with mismatched RNA-seq data 
+```{r}
+music.long = music.long %>% filter(!Sample %in%c("LNEN246_TU","LNEN251_TU1") )
+
+
+length( var_cli$sample_id[!is.na(var_cli$RNAseq_batch) & !is.na(var_cli$group) ] ) #273 samples 
+
+all( var_cli$sample_id[!is.na(var_cli$RNAseq_batch) & !is.na(var_cli$group) ] %in% music.long$Sample ) # all 273 samples are there
+```
+
+
+```{r}
+# reorder 
+celltypesorderA1  = music.long %>% filter(group=="Ca A1") %>% group_by(cell_type_coarse) %>% summarize(Proportion=median(Proportion,na.rm=T)) %>% arrange(-Proportion) %>% pull(cell_type_coarse)
+celltypesorderA2  = music.long %>% filter(group=="Ca A2") %>% group_by(cell_type_coarse) %>% summarize(Proportion=median(Proportion,na.rm=T)) %>% arrange(-Proportion) %>% pull(cell_type_coarse)
+celltypesorderB   = music.long %>% filter(group=="Ca B") %>% group_by(cell_type_coarse) %>% summarize(Proportion=median(Proportion,na.rm=T)) %>% arrange(-Proportion) %>% pull(cell_type_coarse)
+celltypesordersce  = music.long %>% filter(group=="sc-enriched") %>% group_by(cell_type_coarse) %>% summarize(Proportion=median(Proportion,na.rm=T)) %>% arrange(-Proportion) %>% pull(cell_type_coarse)
+celltypesorderL   = music.long %>% filter(group=="LCNEC") %>% group_by(cell_type_coarse) %>% summarize(Proportion=median(Proportion,na.rm=T)) %>% arrange(-Proportion) %>% pull(cell_type_coarse)
+celltypesorderS   = music.long %>% filter(group=="SCLC") %>% group_by(cell_type_coarse) %>% summarize(Proportion=median(Proportion,na.rm=T)) %>% arrange(-Proportion) %>% pull(cell_type_coarse)
+
+music.long = music.long %>% mutate( group = factor(group,levels=c( "Ca A1","Ca A2","Ca B","sc-enriched","LCNEC","SCLC")) )
+
+celltypes_groups = music.long %>% group_by(group,Sample,cell_type_coarse) %>% summarize(Proportion=sum(Proportion,na.rm=T)) %>% ungroup() %>% group_by(group,cell_type_coarse) %>%  summarize(Proportion=mean(Proportion,na.rm=T))
+
+## global profiles
+## A1
+music.long = music.long %>% mutate(cell_type_coarse = factor(cell_type_coarse,levels=rev(celltypesorderA1)))
+samplesorder = music.long %>% arrange(group,desc(cell_type_coarse),Proportion) %>% pull(Sample) %>% unique()
+music.long = music.long %>% mutate( Sample = factor(Sample,levels=samplesorder))
+
+Fig4A_A1 = ggplot(music.long %>% filter(group=="Ca A1"), aes(x=as.numeric(droplevels(Sample)),y=Proportion,fill=cell_type_coarse)) + 
+  geom_bar(position = "stack", stat = "identity", width = 1,col=NA,show.legend = F) + xlim(0,109)+#scale_x_discrete(breaks = c(0,109), labels= c(0,109),limits=c("1","109"))+
+  scale_fill_manual(values=colors_cells) +scale_color_manual(values=colors_cells) +  
+  theme_classic() + ylab("") + theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank()) #+ scale_fill_manual(values=cell11) #+ scale_color_manual(values=cell11)
+
+## A2
+music.long = music.long %>% mutate(cell_type_coarse = factor(cell_type_coarse,levels=rev(celltypesorderA2)))
+samplesorder = music.long %>% arrange(group,desc(cell_type_coarse),Proportion) %>% pull(Sample) %>% unique()
+music.long = music.long %>% mutate( Sample = factor(Sample,levels=samplesorder))
+
+Fig4A_A2 = ggplot(music.long %>% filter(group=="Ca A2"), aes(x=as.numeric(droplevels(Sample)),y=Proportion,fill=cell_type_coarse)) + 
+  geom_bar(position = "stack", stat = "identity", width = 1,col=NA,show.legend = F) + xlim(0,109)+#scale_x_discrete(breaks = c(0,109), labels= c(0,109),limits=c("1","109"))+
+  scale_fill_manual(values=colors_cells) +scale_color_manual(values=colors_cells) +  
+  theme_classic() + ylab("") + theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank()) #+ scale_fill_manual(values=cell11) #+ scale_color_manual(values=cell11)
+
+## B
+music.long = music.long %>% mutate(cell_type_coarse = factor(cell_type_coarse,levels=rev(celltypesorderB)))
+samplesorder = music.long %>% arrange(group,desc(cell_type_coarse),Proportion) %>% pull(Sample) %>% unique()
+music.long = music.long %>% mutate( Sample = factor(Sample,levels=samplesorder))
+
+Fig4A_B = ggplot(music.long %>% filter(group=="Ca B"), aes(x=as.numeric(droplevels(Sample)),y=Proportion,fill=cell_type_coarse)) + 
+  geom_bar(position = "stack", stat = "identity", width = 1,col=NA,show.legend = F) + xlim(0,109)+#scale_x_discrete(breaks = c(0,109), labels= c(0,109),limits=c("1","109"))+
+  scale_fill_manual(values=colors_cells) +scale_color_manual(values=colors_cells) +  
+  theme_classic() + ylab("") + theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank()) #+ scale_fill_manual(values=cell11) #+ scale_color_manual(values=cell11)
+
+## SCE
+music.long = music.long %>% mutate(cell_type_coarse = factor(cell_type_coarse,levels=rev(celltypesordersce)))
+samplesorder = music.long %>% arrange(group,desc(cell_type_coarse),Proportion) %>% pull(Sample) %>% unique()
+music.long = music.long %>% mutate( Sample = factor(Sample,levels=samplesorder))
+
+Fig4A_sce = ggplot(music.long %>% filter(group=="sc-enriched"), aes(x=as.numeric(droplevels(Sample)),y=Proportion,fill=cell_type_coarse)) + 
+  geom_bar(position = "stack", stat = "identity", width = 1,col=NA,show.legend = F) + xlim(0,109)+#scale_x_discrete(breaks = c(0,109), labels= c(0,109),limits=c("1","109"))+
+  scale_fill_manual(values=colors_cells) +scale_color_manual(values=colors_cells) +  
+  theme_classic() + ylab("") + theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank()) #+ scale_fill_manual(values=cell11) #+ scale_color_manual(values=cell11)
+
+## LCNEC
+music.long = music.long %>% mutate(cell_type_coarse = factor(cell_type_coarse,levels=rev(celltypesorderL)))
+samplesorder = music.long %>% arrange(group,desc(cell_type_coarse),Proportion) %>% pull(Sample) %>% unique()
+music.long = music.long %>% mutate( Sample = factor(Sample,levels=samplesorder))
+
+Fig4A_L = ggplot(music.long %>% filter(group=="LCNEC"), aes(x=as.numeric(droplevels(Sample)),y=Proportion,fill=cell_type_coarse)) + 
+  geom_bar(position = "stack", stat = "identity", width = 1,col=NA,show.legend = F) + xlim(0,109)+#scale_x_discrete(breaks = c(0,109), labels= c(0,109),limits=c("1","109"))+
+  scale_fill_manual(values=colors_cells) +scale_color_manual(values=colors_cells) +  
+  theme_classic() + ylab("") + theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank()) #+ scale_fill_manual(values=cell11) #+ scale_color_manual(values=cell11)
+
+## SCLC
+music.long = music.long %>% mutate(cell_type_coarse = factor(cell_type_coarse,levels=rev(celltypesorderS)))
+samplesorder = music.long %>% arrange(group,desc(cell_type_coarse),Proportion) %>% pull(Sample) %>% unique()
+music.long = music.long %>% mutate( Sample = factor(Sample,levels=samplesorder))
+
+Fig4A_S = ggplot(music.long %>% filter(group=="SCLC"), aes(x=as.numeric(droplevels(Sample)),y=Proportion,fill=cell_type_coarse)) + 
+  geom_bar(position = "stack", stat = "identity", width = 1,col=NA,show.legend = F) + xlim(0,109)+#scale_x_discrete(breaks = c(0,109), labels= c(0,109),limits=c("1","109"))+
+  scale_fill_manual(values=colors_cells) +scale_color_manual(values=colors_cells) +  
+  theme_classic() + ylab("") + theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank()) #+ scale_fill_manual(values=cell11) #+ scale_color_manual(values=cell11)
+
+
+Fig4A_A1+Fig4A_A2
+
+## average profiles 
+ggplot(celltypes_groups %>% filter(!is.na(group)), aes(x=group,y=Proportion,fill=cell_type_coarse)) + 
+  geom_bar(position = "stack", stat = "identity", width = 1,col="black") + scale_fill_manual(values=colors_cells) + 
+  theme_classic() + ylab("") 
+
+ggsave(filename= "Fig4A_music_deconv.svg", Fig4A_A1+Fig4A_A2+Fig4A_B+Fig4A_sce+Fig4A_L+Fig4A_S,height = 2.5,width=10)
+```
+
+## Distribution of values across samples
+
+```{r}
+## average profiles 
+music.long.NE = music.long %>% filter(!is.na(group),cell_type_coarse %in% c("Lower Airway Progenitor","Neuroendocrine CALCA+",
+                                                                              "Neuroendocrine NEUROD1+","Club",
+                                                                              "NE early 1")) %>% 
+  mutate(cell_type_coarse = factor(cell_type_coarse,levels=c("Lower Airway Progenitor","Neuroendocrine CALCA+",
+                                                                              "Neuroendocrine NEUROD1+","Club",
+                                                                              "NE early 1")),
+         group = factor(group,levels=c( "Ca A1","Ca A2","Ca B","sc-enriched","LCNEC","SCLC")))
+
+Fig4B = ggplot(music.long.NE, aes(x=group,y=Proportion,fill=group)) + 
+  geom_violin(col=NA,scale = "width") +   geom_boxplot(width=0.2,fill="white") + #geom_beeswarm(col="white",shape=21,size=1)+ 
+  geom_quasirandom(col="white", shape=21, aes(fill=group),data = music.long.NE %>% filter(group=="sc-enriched") ) +
+  theme_classic() + scale_fill_manual(values=c(arc4,type5)) +ylab("Proportion")+xlab("") + guides(fill="none") + facet_wrap(.~cell_type_coarse,nrow = 2,ncol=3) + 
+  theme(axis.text.x = element_text(angle=90,hjust = 1,vjust=0.5)) + scale_y_continuous(breaks = c(0,0.2,0.4,0.6,0.8)) +
+  stat_compare_means(comparisons=list(
+      c("Ca A1", "Ca A2"),c("Ca A1", "Ca B"),c("Ca A1", "sc-enriched"),#c("Ca A1", "LCNEC"),c("Ca A1", "SCLC"), # remove from plots comparisons with LCNEC and SCLC to avoid overcrowding display, check table for results
+      c("Ca A2", "Ca B"),c("Ca A2", "sc-enriched"),#c("Ca A2", "LCNEC"),c("Ca A2", "SCLC"),
+      c("Ca B", "sc-enriched")#,#c("Ca B", "LCNEC"),c("Ca B", "SCLC"),
+      #c("sc-enriched", "LCNEC"),c("sc-enriched", "SCLC"),
+      #c("LCNEC", "SCLC")
+    ),
+    method="wilcox.test",
+    label="p.signif", hide.ns=TRUE, tip.length=0,step.increase=0.08, 
+    label.y = 0.62,
+    symnum.args = list(cutpoints = c(0, 0.001, 0.01, 0.05, Inf), symbols = c("***", "**", "*", "ns")) # Specify MEN1_vst for statistical comparisons
+    ) + 
+  theme_classic() + ylab("") + theme(axis.text.x = element_text(angle = 45,hjust = 1,vjust = 1))
+
+ggsave(filename= "Fig4B_music_NEcells_violins.svg", Fig4B,height = 3*2,width=4*2)
+```
+
+### Supplementary table
+```{r}
+library(broom)
+music.test.tables = tibble()
+music.pairwise.test.tables = tibble()
+
+for( x in levels(music.long$cell_type_coarse) ){
+  music.test.tables=bind_rows(music.test.tables, 
+                              bind_cols(Cell_type = x,  
+                                        tidy( kruskal.test( music.long %>% filter(cell_type_coarse==x) %>% pull(Proportion),g = music.long %>% filter(cell_type_coarse==x) %>% pull(group) ) ) ) )
+  music.pairwise.test.tables=bind_rows(music.pairwise.test.tables, 
+                                   bind_cols(Cell_type = x, Comparison="Ca A1-Ca A2",tidy( wilcox.test( music.long %>% filter(cell_type_coarse==x,group=="Ca A1") %>% pull(Proportion),
+                                                                            music.long %>% filter(cell_type_coarse==x,group=="Ca A2") %>% pull(Proportion)) ),
+                                             Mean1 = mean( music.long %>% filter(cell_type_coarse==x,group=="Ca A1") %>% pull(Proportion) ),
+                                             Mean2 = mean( music.long %>% filter(cell_type_coarse==x,group=="Ca A2") %>% pull(Proportion) )),
+                                   bind_cols(Cell_type = x, Comparison="Ca A1-Ca B",tidy( wilcox.test( music.long %>% filter(cell_type_coarse==x,group=="Ca A1") %>% pull(Proportion),
+                                                                            music.long %>% filter(cell_type_coarse==x,group=="Ca B") %>% pull(Proportion)) ),
+                                             Mean1 = mean( music.long %>% filter(cell_type_coarse==x,group=="Ca A1") %>% pull(Proportion) ),
+                                             Mean2 = mean( music.long %>% filter(cell_type_coarse==x,group=="Ca B") %>% pull(Proportion) )),
+                                   bind_cols(Cell_type = x, Comparison="Ca A1-sce",tidy( wilcox.test( music.long %>% filter(cell_type_coarse==x,group=="Ca A1") %>% pull(Proportion),
+                                                                            music.long %>% filter(cell_type_coarse==x,group=="sc-enriched") %>% pull(Proportion)) ),
+                                             Mean1 = mean( music.long %>% filter(cell_type_coarse==x,group=="Ca A1") %>% pull(Proportion) ),
+                                             Mean2 = mean( music.long %>% filter(cell_type_coarse==x,group=="sc-enriched") %>% pull(Proportion) )),
+                                   bind_cols(Cell_type = x, Comparison="Ca A1-LCNEC",tidy( wilcox.test( music.long %>% filter(cell_type_coarse==x,group=="Ca A1") %>% pull(Proportion),
+                                                                            music.long %>% filter(cell_type_coarse==x,group=="LCNEC") %>% pull(Proportion)) ),
+                                             Mean1 = mean( music.long %>% filter(cell_type_coarse==x,group=="Ca A1") %>% pull(Proportion) ),
+                                             Mean2 = mean( music.long %>% filter(cell_type_coarse==x,group=="LCNEC") %>% pull(Proportion) )),
+                                   bind_cols(Cell_type = x, Comparison="Ca A1-SCLC",tidy( wilcox.test( music.long %>% filter(cell_type_coarse==x,group=="Ca A1") %>% pull(Proportion),
+                                                                            music.long %>% filter(cell_type_coarse==x,group=="SCLC") %>% pull(Proportion)) ),
+                                             Mean1 = mean( music.long %>% filter(cell_type_coarse==x,group=="Ca A1") %>% pull(Proportion) ),
+                                             Mean2 = mean( music.long %>% filter(cell_type_coarse==x,group=="SCLC") %>% pull(Proportion) )),
+                                   bind_cols(Cell_type = x, Comparison="Ca A2-Ca B",tidy( wilcox.test( music.long %>% filter(cell_type_coarse==x,group=="Ca A2") %>% pull(Proportion),
+                                                                            music.long %>% filter(cell_type_coarse==x,group=="Ca B") %>% pull(Proportion)) ),
+                                             Mean1 = mean( music.long %>% filter(cell_type_coarse==x,group=="Ca A2") %>% pull(Proportion) ),
+                                             Mean2 = mean( music.long %>% filter(cell_type_coarse==x,group=="Ca B") %>% pull(Proportion) )),
+                                   bind_cols(Cell_type = x, Comparison="Ca A2-sce",tidy( wilcox.test( music.long %>% filter(cell_type_coarse==x,group=="Ca A2") %>% pull(Proportion),
+                                                                            music.long %>% filter(cell_type_coarse==x,group=="sc-enriched") %>% pull(Proportion)) ),
+                                             Mean1 = mean( music.long %>% filter(cell_type_coarse==x,group=="Ca A2") %>% pull(Proportion) ),
+                                             Mean2 = mean( music.long %>% filter(cell_type_coarse==x,group=="sc-enriched") %>% pull(Proportion) )),
+                                   bind_cols(Cell_type = x, Comparison="Ca A2-LCNEC",tidy( wilcox.test( music.long %>% filter(cell_type_coarse==x,group=="Ca A2") %>% pull(Proportion),
+                                                                            music.long %>% filter(cell_type_coarse==x,group=="LCNEC") %>% pull(Proportion)) ),
+                                             Mean1 = mean( music.long %>% filter(cell_type_coarse==x,group=="Ca A2") %>% pull(Proportion) ),
+                                             Mean2 = mean( music.long %>% filter(cell_type_coarse==x,group=="LCNEC") %>% pull(Proportion) )),
+                                   bind_cols(Cell_type = x, Comparison="Ca A2-SCLC",tidy( wilcox.test( music.long %>% filter(cell_type_coarse==x,group=="Ca A2") %>% pull(Proportion),
+                                                                            music.long %>% filter(cell_type_coarse==x,group=="SCLC") %>% pull(Proportion)) ),
+                                             Mean1 = mean( music.long %>% filter(cell_type_coarse==x,group=="Ca A2") %>% pull(Proportion) ),
+                                             Mean2 = mean( music.long %>% filter(cell_type_coarse==x,group=="SCLC") %>% pull(Proportion) )),
+                                   bind_cols(Cell_type = x, Comparison="Ca B-sce",tidy( wilcox.test( music.long %>% filter(cell_type_coarse==x,group=="Ca B") %>% pull(Proportion),
+                                                                            music.long %>% filter(cell_type_coarse==x,group=="sc-enriched") %>% pull(Proportion)) ),
+                                             Mean1 = mean( music.long %>% filter(cell_type_coarse==x,group=="Ca B") %>% pull(Proportion) ),
+                                             Mean2 = mean( music.long %>% filter(cell_type_coarse==x,group=="sc-enriched") %>% pull(Proportion) )),
+                                   bind_cols(Cell_type = x, Comparison="Ca B-LCNEC",tidy( wilcox.test( music.long %>% filter(cell_type_coarse==x,group=="Ca B") %>% pull(Proportion),
+                                                                            music.long %>% filter(cell_type_coarse==x,group=="LCNEC") %>% pull(Proportion)) ),
+                                             Mean1 = mean( music.long %>% filter(cell_type_coarse==x,group=="Ca B") %>% pull(Proportion) ),
+                                             Mean2 = mean( music.long %>% filter(cell_type_coarse==x,group=="LCNEC") %>% pull(Proportion) )),
+                                   bind_cols(Cell_type = x, Comparison="Ca B-SCLC",tidy( wilcox.test( music.long %>% filter(cell_type_coarse==x,group=="Ca B") %>% pull(Proportion),
+                                                                            music.long %>% filter(cell_type_coarse==x,group=="SCLC") %>% pull(Proportion)) ),
+                                             Mean1 = mean( music.long %>% filter(cell_type_coarse==x,group=="Ca B") %>% pull(Proportion) ),
+                                             Mean2 = mean( music.long %>% filter(cell_type_coarse==x,group=="SCLC") %>% pull(Proportion) )),
+                                   bind_cols(Cell_type = x, Comparison="sce-LCNEC",tidy( wilcox.test( music.long %>% filter(cell_type_coarse==x,group=="sc-enriched") %>% pull(Proportion),
+                                                                            music.long %>% filter(cell_type_coarse==x,group=="LCNEC") %>% pull(Proportion)) ),
+                                             Mean1 = mean( music.long %>% filter(cell_type_coarse==x,group=="sc-enriched") %>% pull(Proportion) ),
+                                             Mean2 = mean( music.long %>% filter(cell_type_coarse==x,group=="LCNEC") %>% pull(Proportion) )),
+                                   bind_cols(Cell_type = x, Comparison="sce-SCLC",tidy( wilcox.test( music.long %>% filter(cell_type_coarse==x,group=="sc-enriched") %>% pull(Proportion),
+                                                                            music.long %>% filter(cell_type_coarse==x,group=="SCLC") %>% pull(Proportion)) ),
+                                             Mean1 = mean( music.long %>% filter(cell_type_coarse==x,group=="sc-enriched") %>% pull(Proportion) ),
+                                             Mean2 = mean( music.long %>% filter(cell_type_coarse==x,group=="SCLC") %>% pull(Proportion) )),
+                                   bind_cols(Cell_type = x, Comparison="LCNEC-SCLC",tidy( wilcox.test( music.long %>% filter(cell_type_coarse==x,group=="LCNEC") %>% pull(Proportion),
+                                                                            music.long %>% filter(cell_type_coarse==x,group=="SCLC") %>% pull(Proportion)) ),
+                                             Mean1 = mean( music.long %>% filter(cell_type_coarse==x,group=="LCNEC") %>% pull(Proportion) ),
+                                             Mean2 = mean( music.long %>% filter(cell_type_coarse==x,group=="SCLC") %>% pull(Proportion) ))
+                                     )
+}
+music.test.tables = bind_cols(music.test.tables,"Q value" = p.adjust(music.test.tables$p.value,method = "BH") )
+
+music.pairwise.test.tables = music.pairwise.test.tables %>% group_by(Comparison) %>% mutate(q.value = p.adjust(p.value,method="BH"))
+
+music.pairwise.test.tables%>% filter(q.value < 0.05)
+
+write_tsv(music.pairwise.test.tables,file = "Table_S_music_deconv_pairwise_tests.tsv")
+write_tsv(music.test.tables,file = "Table_S_music_deconv_global_tests.tsv")
+```

@@ -1,0 +1,151 @@
+---
+title: "Fig5DE_SupFigs"
+author: "E. Mathian and N. Alcala"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Figure 5DE and associated supplementary figures: Whole-slide images deep learning analyses
+
+This document produces Figure 5 from the lungNENomics manuscript, describing the results of Deep-learning analyses of whole-slide images.
+
+## Load libraries
+
+```{r libs, echo=FALSE}
+library(tidyverse)
+library(ggpubr)
+library(RColorBrewer)
+#library(dplyr)
+#library(tidyr)
+#library(optimx)
+#library(ggExtra)
+#library(webr)
+#library(stringr)
+#library(tibble)
+#library(gridExtra)
+#library(reshape2)
+#library(tools)
+#library(readxl)
+#library(scales)
+#library(mvtnorm)
+#library(RColorBrewer)
+#library(irr)  # for Kappa
+```
+
+```{r}
+setwd("/data/lungNENomics/work/MathianE/pathreview2024/R_Script")
+#dir.create("../FiguresStatsPathReview")
+```
+
+## Define colors
+```{r}
+source("/data/lungNENomics/work/Descriptive_manuscript_data/Colour_palettes.R")
+yes_no_pal <- c("Yes"="#B2DF8A", "No"="#FB9A99" , "Maybe"="#A6CEE3")
+t_cells_size <- c("Unusually small"="#33A02C", "Unusually large"="#E31A1C" , "Medium"="#1F78B4", "NA_T_cells_size"= "#CCCCCC")
+nc_ratio_pal <- c("Unusually low"="#33A02C", "Unusually high"="#E31A1C" , "Medium"="#1F78B4", "NA_NC_ratio"= "#CCCCCC")
+#"#A6CEE3" "#1F78B4" "#B2DF8A" "#33A02C" "#FB9A99" "#E31A1C" "#FDBF6F" "#FF7F00" "#CAB2D6" "#6A3D9A" "#FFFF99" "#B15928"
+```
+
+## import data
+
+We import the list of tiles and their cluster assignments
+```{r}
+#read_csv("/data/lungNENomics/work/MathianE/pathreview2024/step_2_global_annotation/Partitions_to_annotate_globally.xlsx")
+#read_csv("/data/lungNENomics/work/MathianE/pathreview2024/step_2_global_annotation_answer/conacatenated_global_annotation.csv")
+Gannot.pre = read_csv("/data/lungNENomics/work/MathianE/pathreview2024/step_2_global_annotation_answer/conacatenated_global_annotation_agg_partition.csv") %>% mutate(partition=as.numeric(str_extract(partition_id,"[0-9]+$")))
+load("/data/lungNENomics/work/Descriptive_manuscript_data/Images/Deep_learning_Alexandra/Supervised_Molecular_groups/partition_df_filter2.RData") # list of all tiles in the global partitions
+
+Gextracted_tiles = read_csv("/data/lungNENomics/work/MathianE/LNEN_LCNEC_Molecular_barlow_twin/leinden_highest_attn_bt_proj/FiguresOverviewPerfRoformerLeiden_K250_res2_run3/TilesExtractionRandom50Tiles/ExtractedTiles.csv") # list of tiles actually reviewed by pathologists
+
+#partition_df_filter2
+Gannot = left_join(partition_df_filter2 %>% filter(img_id %in% Gextracted_tiles$TilesExtracted) ,Gannot.pre,by=c("partition")) %>% 
+  dplyr::rename("patient_id"=sample_id, "erythrocyte"=erythrocytes , "endothelial_cell"="endothelial_cells" , 
+                "ciliated_cell"="ciliated_cells", "cartilage_/_chondrocyte"="cartilage", "gobelt_cell"="gobelet_cells", 
+                "spindle"="spindle_cells","pyknotic"= "pyknotic_cells","plasmocytoid"="plasmocytoid_cells","polygonal"="polygonal_cells",
+                "macrophage"="macrophages","lymphocyte"=lymphocytes,
+                "n:c_ratio"="NC_ratio","necrosis"="foci_of_necrosis")
+
+IDmatch = read_csv("/data/lungNENomics/work/MathianE/LNEN_LCNEC_Molecular_barlow_twin/KEY_FILE_tneid_manuscript_id_match.csv")
+TBTannot = read_csv("/data/lungNENomics/work/MathianE/pathreview2024/step2_local_annotation_results/Supplementary_S43_TableTileByTileAnnotation.csv")
+
+TBTannot2 = left_join(TBTannot,IDmatch,by=c(patient_id="sample_id"))
+colnames(TBTannot2) = str_replace_all(tolower(colnames(TBTannot2)),pattern = " ", replacement = "_")
+
+all_annot = bind_rows(TBTannot2,Gannot)
+```
+
+We format the data and compute statistics for each feature
+```{r}
+all_annot.perSample = all_annot %>% pivot_longer(fibroblast:necrosis,names_to = "Feature") %>% 
+  mutate(value_numeric = case_when(value=="No" ~ 0,
+                                   value=="Yes" ~ 1,
+                                   value=="Unusually small"~0,
+                                   value=="Unusually low"~0,
+                                   value=="Medium"~0.5,
+                                   value=="Unusually high"~1,
+                                   value=="Unusually large"~1,
+                                   TRUE~NA)) %>% 
+  group_by(patient_id,Feature) %>% summarize(value_numeric = mean(value_numeric,na.rm=T),group=archtype_label_combined[1])
+
+
+all_annot.perSample.stats = data.frame(Feature=NULL,"Statistic"=NULL,"Parameter"=NULL,"P_value"=NULL)
+for(feat in unique(all_annot.perSample$Feature)[-23]){ # without tissue architecture, which is not numeric
+  print(feat)
+  datatmp = all_annot.perSample %>% filter(Feature==feat)
+  res = kruskal.test(value_numeric~group,data=datatmp)
+  res.means = datatmp %>% group_by(group) %>% summarize(mean = mean(value_numeric,na.rm=T))
+  
+  means.perm=c()
+  for(i in 1:10000){
+    group.perm = sample(datatmp$group,replace=F)
+    means.perm = rbind(means.perm,c( mean(datatmp$value_numeric[group.perm=="Ca A1"],na.rm=T), 
+                    mean(datatmp$value_numeric[group.perm=="Ca A2"],na.rm=T),
+                    mean(datatmp$value_numeric[group.perm=="Ca B"],na.rm=T) ) )
+  }
+  pval_A1A2 = mean( abs(res.means$mean[1]-res.means$mean[2]) <= abs(means.perm[,1]-means.perm[,2]) )
+  pval_A1B  = mean( abs(res.means$mean[1]-res.means$mean[3]) <= abs(means.perm[,1]-means.perm[,3]) )
+  pval_A2B  = mean( abs(res.means$mean[2]-res.means$mean[3]) <= abs(means.perm[,2]-means.perm[,3]) )
+  pval_global  = mean( (abs(res.means$mean[1]-res.means$mean[2])+abs(res.means$mean[1]-res.means$mean[3]))  <= 
+          (abs(means.perm[,1]-means.perm[,2]) + abs(means.perm[,1]-means.perm[,3]) ) )
+  
+  all_annot.perSample.stats = rbind( all_annot.perSample.stats, c(feat,res$statistic,res$parameter,res$p.value,(res.means %>% arrange( group) )$mean,
+                                                                  pval_A1A2,pval_A1B,pval_A2B,pval_global) )
+}
+colnames(all_annot.perSample.stats) = c("Feature","Statistic","Parameter","P_value","Ca A1","Ca A2","Ca B",
+                                        "empirical_P_value_A1vsA2","empirical_P_value_A1vsB","empirical_P_value_A2vsB","empirical_P_value_global")
+for(j in 2:ncol(all_annot.perSample.stats)) all_annot.perSample.stats[,j] = as.numeric(all_annot.perSample.stats[,j])
+
+all_annot.perSample.stats$q_value = p.adjust(all_annot.perSample.stats$P_value,method = "BH")
+all_annot.perSample.stats$empirical_q_value_A1vsA2 = p.adjust(all_annot.perSample.stats$empirical_P_value_A1vsA2,method = "BH")
+all_annot.perSample.stats$empirical_q_value_A1vsB  = p.adjust(all_annot.perSample.stats$empirical_P_value_A1vsB,method = "BH")
+all_annot.perSample.stats$empirical_q_value_A2vsB  = p.adjust(all_annot.perSample.stats$empirical_P_value_A2vsB,method = "BH")
+all_annot.perSample.stats$empirical_q_value_global = p.adjust(all_annot.perSample.stats$empirical_P_value_global,method = "BH")
+
+all_annot.perSample.stats %>% filter(q_value<=0.05 | empirical_q_value<=0.05)
+
+ggplot(all_annot.perSample.stats,aes(x=q_value,y=empirical_q_value)) + geom_point() + 
+  geom_smooth(method = "lm")+ geom_hline(yintercept=c(0.05,0.1),linetype="dashed") +
+  geom_vline(xintercept=c(0.05,0.1),linetype="dashed") +
+  theme_classic()
+
+```
+
+
+We plot the results
+```{r}
+FigSDLannottests = ggplot(all_annot.perSample %>% filter(!Feature=="tissue_architecture"),aes(y=value_numeric,x=group,fill=group))+geom_violin(scale = "width") + geom_boxplot(width=0.1,fill="white") + 
+  stat_compare_means(
+    comparisons=list(
+      c("Ca A1", "Ca A2"),c("Ca A1", "Ca B"),c("Ca A2", "Ca B")),
+    method="wilcox.test",
+    label="p.signif",
+    hide.ns=TRUE,
+    tip.length=0,label.y.npc = 0,
+    step.increase=0.2,
+  ) + scale_y_continuous(limits = c(0,1.6),breaks = c(0,0.5,1.0)) + 
+  theme_classic() + scale_fill_manual(values=arc4) + facet_wrap(.~Feature) + guides(fill="none")
+
+rownames(all_annot.perSample.stats) = all_annot.perSample.stats$Feature
+
+pheatmap::pheatmap( t((all_annot.perSample.stats%>% filter(empirical_q_value_global<=0.05)) [,c(5:7)]) ,scale = "none")
+```
