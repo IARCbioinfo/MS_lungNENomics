@@ -199,29 +199,29 @@ arc.features.df.long$cluster.label[arc.features.df.long$cluster=="C1"] = "Immune
 arc.features.df.long$cluster.label = factor(arc.features.df.long$cluster.label,
                                             levels=c("Immune_rich","Immune_stromal","T_cell_centric","Myeloid_centric","Immune_desert","Immune_stroma_desert"))
 
-FigS61 = ggplot( arc.features.df.long %>% filter(Feature %in% c("Tcell","Myeloid","Stroma","Treg","DC1","DC2","CD4CD8ratio","DC2DC1ratio","MonoMacratio")) , 
+FigS4 = ggplot( arc.features.df.long %>% filter(Feature %in% c("Tcell","Myeloid","Stroma","Treg","DC1","DC2","CD4CD8ratio","DC2DC1ratio","MonoMacratio")) , 
         aes(x=cluster.label,y=Score,fill=cluster.label)) + geom_violin(scale = "width") +  geom_boxplot(width=0.2,fill="white")+
   scale_fill_manual(values=immarc6) + facet_wrap(.~Feature,scales = "free_y") +
   theme_classic() + theme(axis.text.x=element_blank(),axis.ticks.x = element_blank(),axis.line.x=element_blank()) +xlab("")
 
 
-FigS61b = ggplot( arc.features.df.long %>% filter(Feature %in% c("Tcell","Myeloid","Stroma","Treg","DC1","DC2","CD4CD8ratio","DC2DC1ratio","MonoMacratio")) , 
+FigS4b = ggplot( arc.features.df.long %>% filter(Feature %in% c("Tcell","Myeloid","Stroma","Treg","DC1","DC2","CD4CD8ratio","DC2DC1ratio","MonoMacratio")) , 
         aes(x=group,y=Score,fill=group)) + geom_violin(scale = "width") +  geom_boxplot(width=0.2,fill="white")+
   scale_fill_manual(values=colors_clusters) + facet_wrap(.~Feature,scales = "free_y") +
   theme_classic() + theme(axis.text.x=element_blank(),axis.ticks.x = element_blank(),axis.line.x=element_blank()) +xlab("")
 
 
-ggsave(filename="../../../Figures/Supplementary_Figure_S61_immune_v2.svg",
-         (FigS61/FigS61b) + plot_annotation(tag_levels = 'a') & theme(plot.tag = element_text(face = "bold")),height=2*4,width=3*2)
-ggsave(filename="../../../Figures/Supplementary_Figure_S61_immune_v2.pdf",
-       FigS61/FigS61b + plot_annotation(tag_levels = 'a') & theme(plot.tag = element_text(face = "bold")),height=2*4,width=3*2)
+ggsave(filename="../../../Figures/Supplementary_Figure_S4_immune_v2.svg",
+         (FigS4/FigS4b) + plot_annotation(tag_levels = 'a') & theme(plot.tag = element_text(face = "bold")),height=2*4,width=3*2)
+ggsave(filename="../../../Figures/Supplementary_Figure_S4_immune_v2.pdf",
+       FigS4/FigS4b + plot_annotation(tag_levels = 'a') & theme(plot.tag = element_text(face = "bold")),height=2*4,width=3*2)
 ```
 
 Save the table
 ```{r}
 arc.features.df.wide = arc.features.df.long %>% pivot_wider(values_from=Score,names_from=Feature)
 
-write_csv(arc.features.df.wide,file = "/data/lungNENomics/work/alcalan/tomoveto_Descriptive_manuscript_data/RNAseq/TableS44_immune_archetypes_v2.csv")
+write_csv(arc.features.df.wide,file = "/data/lungNENomics/work/alcalan/tomoveto_Descriptive_manuscript_data/RNAseq/TableS11_immune_archetypes_v2.csv")
 ```
 
 

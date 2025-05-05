@@ -1,0 +1,862 @@
+---
+title: "Fig4C.Rmd"
+author: "Alcala and Li"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Figure 4 panel C: spatial transcriptomics analyses
+
+This document produces panel C from Figure 4 from the lungNENomics manuscript, displaying spatial cell type locations and key marker gene expression.
+
+## Load libraries
+
+```{r, setup: load libraries, message=FALSE, warning=FALSE}
+suppressMessages({
+  require(SingleCellExperiment)
+  require(Seurat)
+  require(SeuratDisk)
+  require(patchwork)
+  require(tidyverse)
+  require(ggpubr)
+  require(data.table)
+  require(copykat)
+  require(matrixStats)
+  require(spacexr)
+  require(CARD)
+  require(viridis)
+  require(IRIS)
+})
+```
+
+## Setting up some parameters
+
+Note that because the files to load are too large, they cannot be housed on the IARC repository. They can be generated from the spatial transcriptomics data following the paper's methods.
+```{r, setup: parameters}
+# samples
+sample_ids = c("LNEN071-IARC-A", "LNEN084-IARC-B", "LNEN107-IARC-C", "LNEN206-IARC-D")
+
+# directories
+ddir = file.path("Z://lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/Music_deconvolution_Noah/NEW_data")
+rdir = file.path("Z://lungNENomics/work/alcalan/tomoveto_Descriptive_manuscript_data/spatial/")
+```
+
+### Load reference data
+```{r, load preprocessed reference data (h5ad to seurat object)}
+# load seurat object
+#sobj = readRDS("../data/sc_ref.rds")
+# create seurat object
+mat <- Matrix::readMM(paste0(ddir,"/Alignment_Bischoff2021Carcinoids_LungEpithelium.mtx"))
+mat <- Matrix::t(mat)
+mat <- as(mat, "dgCMatrix")
+
+txs <- read_csv(paste0(ddir,"/Alignment_Bischoff2021Carcinoids_LungEpithelium_gene_names.csv"))
+barcodes <- readLines(paste0(ddir,"/Alignment_Bischoff2021Carcinoids_LungEpithelium_obs_names.csv"))
+colnames(mat) <- make.unique(barcodes[-1])
+rownames(mat) <- make.unique(str_replace(txs$var_names,"_","-") )
+
+ref.assay <- CreateAssayObject(mat, assay = "RNA",min.features = 10,min.cells = 3)
+sobj_ref      <- CreateSeuratObject(ref.assay)
+
+#sobj_ref = CreateSeuratObject(Seurat::ReadMtx(paste0(ddir,"/Alignment_Bischoff2021Carcinoids_LungEpithelium.mtx"),mtx.transpose = T,
+#                cells = paste0(ddir,"/Alignment_Bischoff2021Carcinoids_LungEpithelium_obs_names.csv"),
+#                features = paste0(ddir,"/Alignment_Bischoff2021Carcinoids_LungEpithelium_gene_names.csv"),
+#                cell.sep = ",",feature.sep = ",",skip.cell = 1,skip.feature=1,feature.column = 1))
+
+ref_meta = read.csv(paste0(ddir,"/Alignment_Bischoff2021Carcinoids_LungEpithelium_metadata.csv"))
+rownames(ref_meta) = colnames(sobj_ref)
+```
+
+### Load processed ST data
+```{r, load data }
+load(file.path(rdir, "adatas_scanpy_copykat_06082024.Rdata"))
+```
+
+# IRIS integrative analysis
+
+## create IRIS object
+```{r}
+IRIS_object <- createIRISObject(
+  spatial_countMat_list = lapply(adatas,function(x) x[["Spatial"]]$counts), #lapply(1:4,function(i) normal_card_objs[[i]]@spatial_countMat),
+  spatial_location_list = lapply(adatas,GetTissueCoordinates),#lapply(1:4,function(i) normal_card_objs[[i]]@spatial_location),
+  sc_count = sobj_ref@assays$RNA$counts,
+  sc_meta = ref_meta,
+  ct.varname = "annotation",
+  sample.varname = "Sample ID", #consider all cells as a single sample 
+  minCountGene = 100,
+  minCountSpot =5) 
+```
+
+## Identify domains and plot results
+```{r}
+#### preselect the number of spatial domains 
+for(numCluster in c(2,5,10,20,30,50) ){
+#### perform the integrative and refernce-informed domain detection
+IRIS_object <- IRIS_spatial(IRIS_object,numCluster = numCluster)
+
+save(IRIS_object,file = paste0(ddir,"IRIS_object_",numCluster = 20,"domains.Rda"))
+
+# colors
+library(RColorBrewer)
+n <- numCluster
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+colors2 = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+names(colors2) = 0:(numCluster-1)
+#### extract the domain labels detected by IRIS
+IRIS_domain =  IRIS_object@spatialDomain[,c("Slice","spotName","IRIS_domain")]
+#### relevel the spatial domains, to make it consistent with the orders from Layer 1 to final Layer
+#IRIS_domain$IRIS_domain = plyr::mapvalues(IRIS_domain$IRIS_domain,from = c(0:6), to = c(5,2,3,1,0,4,6))
+#### extract the spatial location information
+spatial_location = IRIS_object@spatialDomain[,c("x","y")]
+spatial_location$x = IRIS_object@spatialDomain$y
+spatial_location$y = -IRIS_object@spatialDomain$x #### make it consistent with many previous visualizations on this tissue. Note that this is only for visualization purpose.
+p1 = IRIS.visualize.domain(IRIS_domain,spatial_location,colors = colors2,numCols = 4)
+ggsave(p1,filename = file.path(paste0(rdir,"/IRIS_domains.pdf")), width = 2.5*3.2,height=3.7)
+
+ggplot( IRIS_domain %>% group_by(Slice,IRIS_domain) %>% summarize(n=n()), aes(x=Slice,y=n,fill=factor(IRIS_domain,levels=0:19))) + geom_bar(stat="identity")+
+  scale_fill_manual(values=colors2)
+
+table(IRIS_domain$Slice,IRIS_domain$IRIS_domain) #17 shared, 1 just 1 spot, 18 7 spots, 19 2 spots
+
+write_tsv(IRIS_domain,file = paste0(ddir,"IRIS_",numCluster = 20,"domains.tsv"))
+}
+```
+
+
+## Plot cell types
+```{r}
+### Here we use the third slice 151509 as an example
+#### select the cell type that we are interested
+ct.visualize = c("Lower Airway Progenitor","Neuroendocrine CALCA+","Neuroendocrine NEUROD1+")
+#### visualize the spatial distribution of the cell type proportion
+library(viridis)
+#### set the color values
+colors = magma(256)
+#### extract the cell type proportion matrix for the example slice
+plots_IRIS_NEcells = vector(mode="list",4)
+for(i in 1:length(unique(IRIS_object@IRIS_Prop$Slice) ) ){
+  IRIS_prop = IRIS_object@IRIS_Prop
+  IRIS_prop = IRIS_prop[IRIS_prop$Slice == unique(IRIS_prop$Slice)[i],]
+  #### extract the spatial information matrix for the example slice
+  IRIS_prop_location = IRIS_prop[,c("Slice","spotName","x","y")]
+  #### This is only for visualization purpose
+  IRIS_prop_location$x = IRIS_prop$y
+  IRIS_prop_location$y = -IRIS_prop$x
+
+  p2 <- IRIS.visualize.eachProp(
+	proportion = IRIS_prop,        
+	spatial_location = IRIS_prop_location, 
+	ct.visualize = ct.visualize,                 #### selected cell types to visualize
+	colors = colors,                             #### if not provide, we will use the default colors
+	numCols = 4)                                 #### number of columns in the figure panel
+  plots_IRIS_NEcells[[i]] = p2
+}
+
+ggsave(paste0(rdir,"/Fig6a_NEcells_IRIS.svg"),
+       plot = plots_IRIS_NEcells[[1]]/plots_IRIS_NEcells[[2]]/plots_IRIS_NEcells[[3]]/plots_IRIS_NEcells[[4]],
+       height = 3*3,width=2.5*3 )
+
+```
+
+
+
+# Cell type colocalization
+
+```{r}
+IRIS_object@IRIS_Prop$Slice[IRIS_object@IRIS_Prop$Slice=="Slice1"] = sample_ids[1]
+IRIS_object@IRIS_Prop$Slice[IRIS_object@IRIS_Prop$Slice=="Slice2"] = sample_ids[2]
+IRIS_object@IRIS_Prop$Slice[IRIS_object@IRIS_Prop$Slice=="Slice3"] = sample_ids[3]
+IRIS_object@IRIS_Prop$Slice[IRIS_object@IRIS_Prop$Slice=="Slice4"] = sample_ids[4]
+
+ggcorCN = ggplot(IRIS_object@IRIS_Prop, aes(x=`Neuroendocrine CALCA+`,y=`Neuroendocrine NEUROD1+`,col=Slice) ) + geom_point(size=0.5) + 
+  geom_smooth(method = "lm",show.legend = F) + stat_cor(method = "pearson", label.x = 0.,show.legend = F) + theme_classic() + guides(col="none")
+#ggplot(IRIS_object@IRIS_Prop, aes(x=`Neuroendocrine CALCA+`,y=`Lower Airway Progenitor`,col=Slice) ) + geom_point() + 
+#  geom_smooth(method = "lm") + theme_classic()
+#ggplot(IRIS_object@IRIS_Prop, aes(x=`Neuroendocrine NEUROD1+`,y=`Lower Airway Progenitor`,col=Slice) ) + geom_point() + 
+#  geom_smooth(method = "lm") + theme_classic()
+ggcorCNLAP = ggplot(IRIS_object@IRIS_Prop, aes(x=`Neuroendocrine NEUROD1+`+`Neuroendocrine CALCA+`,y=`Lower Airway Progenitor`,col=Slice) ) + 
+  geom_point(size=0.5) + geom_smooth(method = "lm",show.legend = F) + stat_cor(method = "pearson", label.x = 0.,show.legend = F) + theme_classic()
+
+ggsave(paste0(rdir,"/Fig6a_NEcells_spatialcor.svg"),plot = ggcorCN+ggcorCNLAP,height = 2.5,width=2.5*2+1 )
+```
+
+Check correlations between all cell types
+```{r}
+cormatIRIS = cor(IRIS_object@IRIS_Prop[,-(1:4)])
+
+pheatmap::pheatmap(cormatIRIS[c("Lower Airway Progenitor","Neuroendocrine CALCA+","Neuroendocrine NEUROD1+"),],color = RColorBrewer::brewer.pal(10,"RdBu"),breaks = seq.int(-1,1,length.out=11),scale = "none"  )
+
+cormatMUSIC = cor(MUSIC_cellprops[,-(1:2)])
+
+pheatmap::pheatmap(cormatMUSIC,color = RColorBrewer::brewer.pal(10,"RdBu"),breaks = seq.int(-1,1,length.out=11),scale = "none" )
+
+sort(cormatMUSIC["Lower Airway Progenitor",],decreasing=T)
+
+sort(cormatIRIS["Lower Airway Progenitor",],decreasing=T)
+
+cor.test(MUSIC_cellprops$`Lower Airway Progenitor`,MUSIC_cellprops$Endothelial_Vein)
+cor.test(MUSIC_cellprops$`Lower Airway Progenitor`,MUSIC_cellprops$Endothelial_Vein)
+cor.test(MUSIC_cellprops$`Lower Airway Progenitor`,MUSIC_cellprops$Endothelial_Vein)
+
+pheatmap::pheatmap(cormatMUSIC[c("Lower Airway Progenitor","Neuroendocrine CALCA+","Neuroendocrine NEUROD1+"),unique(ref_meta$cell_type_imm)[1:13]],
+                   color = RColorBrewer::brewer.pal(10,"RdBu"),
+                   breaks = seq.int(-1,1,length.out=11),scale="none",cluster_cols = T)
+
+pheatmap::pheatmap(cormatIRIS[c("Lower Airway Progenitor","Neuroendocrine CALCA+","Neuroendocrine NEUROD1+"),unique(ref_meta$cell_type_imm)[1:13]],
+                   color = RColorBrewer::brewer.pal(10,"RdBu"),
+                   breaks = seq.int(-1,1,length.out=11),scale="none",cluster_cols = T)
+
+cor.test(IRIS_object@IRIS_Prop$`Lower Airway Progenitor`,IRIS_object@IRIS_Prop$cDC) # signif
+cor.test(IRIS_object@IRIS_Prop$`Lower Airway Progenitor`,IRIS_object@IRIS_Prop$T_conv) # signif
+
+
+#regroup by myeloid / lymphoid immune cells
+MUSIC_cellprops$Myelo_imm_cells  = MUSIC_cellprops[,c( "B","Macrophage","Myeloid","Monocyte","cDC","Macrophage_proliferating","Mast")]
+MUSIC_cellprops$Lympho_imm_cells = MUSIC_cellprops[,c( "T_conv","T_CD8","NK","pDC","T/NK_proliferating" )]
+
+IRIS_cellprops = IRIS_object@IRIS_Prop
+IRIS_cellprops$Myelo_imm_cells  = rowSums(IRIS_cellprops[,c( "Macrophage","Myeloid","Monocyte","cDC","Macrophage_proliferating","Mast")])
+IRIS_cellprops$Lympho_imm_cells = rowSums(IRIS_cellprops[,c( "B","T_conv","T_CD8","NK","pDC","T/NK_proliferating" )])
+
+# not correlated overall, mostly with specific cell types
+pheatmap::pheatmap(cor(IRIS_cellprops[,c("Lower Airway Progenitor","Neuroendocrine CALCA+","Neuroendocrine NEUROD1+","Myelo_imm_cells","Lympho_imm_cells")])[1:3,4:5],
+                   color = RColorBrewer::brewer.pal(9,"RdBu"),
+                   breaks = seq.int(-1,1,length.out=10),scale="none",cluster_cols = T)
+
+
+```
+
+# Compare proportions between MUSIC bulk deconvolution and spatial
+
+```{r}
+#plot cluster proportions of each sample
+Cell_props_IRIS = IRIS_object@IRIS_Prop %>% pivot_longer(cols=B:Serous,values_to = "Proportion",names_to="Cell_type") %>% 
+  group_by(Slice,Cell_type) %>% summarize(mean_prop=mean(Proportion)) %>% 
+  mutate(Cell_type = factor(Cell_type,levels=Cell_props_IRIS %>% arrange(-mean_prop) %>% pull(Cell_type) %>% unique()))
+
+MUSIC_cellprops = read_csv(paste0(rdir,"/../dataset_NEproportions_Noah.csv"))
+MUSIC_cellprops.withST = MUSIC_cellprops %>% filter( str_detect(Sample,"LNEN071|LNEN084|LNEN107|LNEN206")) %>% 
+  pivot_longer(cols=T_conv:`Neuroendocrine NEUROD1+`,values_to = "Proportion",names_to="Cell_type") %>% 
+  mutate(Cell_type = factor(Cell_type,levels=Cell_props_IRIS %>% arrange(-mean_prop) %>% pull(Cell_type) %>% unique()))
+
+cols_cell_types = c(RColorBrewer::brewer.pal(10,"Paired"),rep("gray",23))
+names(cols_cell_types) = levels(Cell_props_IRIS$Cell_type)
+
+gg_IRISprops = ggplot(Cell_props_IRIS,aes(x=Slice,y=mean_prop,fill=Cell_type)) + geom_bar(stat="identity") + 
+  theme_classic() + scale_fill_manual(values=cols_cell_types) # compare with bulk deconv from Noah
+
+gg_MUSICprops = ggplot(MUSIC_cellprops.withST,aes(x=Sample,y=Proportion,fill=Cell_type)) + geom_bar(stat="identity") + 
+  theme_classic() + scale_fill_manual(values=cols_cell_types) 
+
+(gg_MUSICprops + guides(fill="none")+ggtitle("MUSIC")) + gg_IRISprops + ggtitle("IRIS")# serous and endo artery not present in MUSIC results
+```
+
+# compute archetype scores
+```{r}
+namedat = load("Z://lungNENomics/work/Descriptive_manuscript_data/MOFA/MOFA.Exp.Meth.Alt.CNV_lungNENomicsCombined/ParetoTI/Expression_analyses/Archetype_expression_correlations/Version_2_linear_regression/P_arc_expression.RData")
+
+coreA1 = P_arc_expression %>% filter(A1_core_pos=="TRUE") %>% pull(gene_name)
+coreA2 = P_arc_expression %>% filter(A2_core_pos=="TRUE") %>% pull(gene_name)
+coreB  = P_arc_expression %>% filter(B_core_pos=="TRUE") %>% pull(gene_name)
+coreSC = P_arc_expression %>% filter(sc_enriched_core_pos=="TRUE") %>% pull(gene_name)
+
+coreA1coef = P_arc_expression %>% filter(A1_core_pos=="TRUE") %>% mutate(max=sA1+iA1) %>% pull(max) %>% sum()
+coreA2coef = P_arc_expression %>% filter(A2_core_pos=="TRUE") %>% mutate(max=sA2+iA2) %>% pull(max) %>% sum()
+coreBcoef  = P_arc_expression %>% filter(B_core_pos=="TRUE") %>% mutate(max=sB+iB) %>% pull(max) %>% sum()
+coreSCcoef = P_arc_expression %>% filter(sc_enriched_core_pos=="TRUE") %>% mutate(max=sSC+iSC) %>% pull(max) %>% sum()
+
+#use card
+## load expression data
+load("Z://lungNENomics/files/Internal_Data_2023/RNASeq/Analyses-LungNENomics/Carcinoids-LF11-36/out_RNAseq-transcript-nf-2.2/Robjects/gene_1pass.SE.rda")
+library(SummarizedExperiment)
+gene_1pass.SE
+all(rowData(gene_1pass.SE)$gene_id==gene_count_matrix[,1])
+
+load("Z://lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/gene_count_matrix_PCA_LCNEC_SCLC_ITH_TR.RData")
+rownames(gene_count_matrix)=make.unique(rowData(gene_1pass.SE)$gene_name)
+sc_count.arcs = gene_count_matrix[,colnames(gene_count_matrix) %in% ref_meta.arcs$sample_id]
+
+load("Z://lungNENomics/work/Descriptive_manuscript_data/MOFA/MOFA.Exp.Meth.Alt.CNV_lungNENomicsCombined/ParetoTI/variables_archetypes_MOFA_LNET.RData")
+ref_meta.arcs = var_LNET %>% filter(str_detect(omics_group,"Expr") )
+
+Prop.arcs.l = vector("list",4)
+for(i in 1:4){
+coords = GetTissueCoordinates(adatas[[i]])
+colnames(coords) = c("y", "x")
+coords$y = - coords$y
+
+rownames(ref_meta.arcs) = ref_meta.arcs$sample_id
+sc_count.arcs = sc_count.arcs[,rownames(ref_meta.arcs)]
+
+CARD_obj.arc = createCARDObject(
+    sc_count = as.matrix(sc_count.arcs),
+    sc_meta = ref_meta.arcs,
+	  spatial_count = adatas[[i]]@assays$Spatial$counts,
+	  spatial_location = coords,
+	  ct.varname = "archetype_k4_LF3_label",
+    ct.select = NULL,#unique(ref_meta[ctype_col]),#sobj_ref[[ctype_col]] %>% unique() %>% unlist(),
+	  sample.varname = NULL,
+	  minCountGene = 100,
+	  minCountSpot = 5
+	)
+  
+  # deconvolution
+  # https://rdrr.io/github/YingMa0107/CARD/man/CARD_deconvolution.html
+  CARD_obj.arc = CARD_deconvolution(CARD_object = CARD_obj.arc)
+  
+  # imputation
+  # https://rdrr.io/github/YingMa0107/CARD/man/CARD.imputation.html
+  #CARD_obj = CARD.imputation(CARD_obj, NumGrids = 2000, ineibor = 10, exclude = NULL)
+
+  p1 = CARD.visualize.prop(
+	    proportion = CARD_obj.arc@Proportion_CARD,                         
+	    spatial_location = CARD_obj.arc@spatial_location,            
+	    ct.visualize = names( sort(colSums(CARD_obj.arc@Proportion_CARD),decreasing = T) ), #colnames(normal_card_objs[[sample_id]]@Proportion_CARD),           
+	    colors = c("lightblue","lightyellow","red"), 
+	    pointSize = 0.3,
+	    NumCols = 6)
+  
+  Prop.arcs.l[[i]] =CARD_obj.arc@Proportion_CARD
+  
+    ggsave(p1, 
+      filename = file.path(paste0(rdir,"/CARD_proportions_", sample_ids[i], "_arcs.pdf")), 
+      width = 2.5*3,height=2.5*6)
+}
+
+# save estimates
+write.csv(Prop.arcs.l[[1]],file = paste0(rdir,"/LNEN071_arcprops_spatial.csv"))
+write.csv(Prop.arcs.l[[2]],file = paste0(rdir,"/LNEN084_arcprops_spatial.csv"))
+write.csv(Prop.arcs.l[[3]],file = paste0(rdir,"/LNEN107_arcprops_spatial.csv"))
+write.csv(Prop.arcs.l[[4]],file = paste0(rdir,"/LNEN206_arcprops_spatial.csv"))
+
+# plot global arc proportions
+Prop.arcs.tab = sapply(Prop.arcs.l,colMeans)
+colnames(Prop.arcs.tab) = sample_ids
+Prop.arcs.tab = bind_cols(Arc=rownames(Prop.arcs.tab),as_tibble(Prop.arcs.tab)) %>% pivot_longer(-Arc,values_to = "Proportion",names_to="Sample")
+
+ggproparcsST = ggplot(Prop.arcs.tab , aes(x=Sample,y=Proportion,fill=Arc)) + geom_bar(stat="identity") + theme_classic() + scale_fill_manual(values=arc4)
+
+ggsave(ggproparcsST, filename = file.path(paste0(rdir,"/CARD_arcsprops.pdf")), width = 3,height=2.5)
+
+## compute mean expression for each spot
+for(i in 1:4){
+adatas[[i]]@meta.data$A1score = colSums(log(as.matrix(adatas[[i]]@assays$Spatial$counts[coreA1[coreA1%in%rownames(adatas[[i]]@assays$Spatial$counts)],])+1))#/coreA1coef
+adatas[[i]]@meta.data$A2score = colSums(log(as.matrix(adatas[[i]]@assays$Spatial$counts[coreA2[coreA2%in%rownames(adatas[[i]]@assays$Spatial$counts)],])+1))#/coreA2coef
+adatas[[i]]@meta.data$Bscore  = colSums(log(as.matrix(adatas[[i]]@assays$Spatial$counts[coreB[coreB%in%rownames(adatas[[i]]@assays$Spatial$counts)],])+1))/coreBcoef
+adatas[[i]]@meta.data$SCscore = colSums(log(as.matrix(adatas[[i]]@assays$Spatial$counts[coreSC[coreSC%in%rownames(adatas[[i]]@assays$Spatial$counts)],])+1))#/coreSCcoef
+}
+
+plots_IRIS_arcScores = vector(mode="list",4)
+for(i in 1:length(unique(IRIS_object@IRIS_Prop$Slice) ) ){
+  IRIS_prop = IRIS_object@IRIS_Prop
+  IRIS_prop = cbind(IRIS_prop[IRIS_prop$Slice == unique(IRIS_prop$Slice)[i],],adatas[[i]]@meta.data)
+  #### extract the spatial information matrix for the example slice
+  IRIS_prop_location = IRIS_prop[,c("Slice","spotName","x","y")]
+  #### This is only for visualization purpose
+  IRIS_prop_location$x = IRIS_prop$y
+  IRIS_prop_location$y = -IRIS_prop$x
+
+  p2 <- IRIS.visualize.eachProp(
+	proportion = IRIS_prop,        
+	spatial_location = IRIS_prop_location, 
+	ct.visualize = c("A1score","A2score","Bscore","SCscore"),                 #### selected cell types to visualize
+	colors =  c("lightblue","lightyellow","red"),                             #### if not provide, we will use the default colors
+	numCols = 4)                                 #### number of columns in the figure panel
+  plots_IRIS_arcScores[[i]] = p2
+}
+
+ggsave( plots_IRIS_arcScores[[1]]/plots_IRIS_arcScores[[2]]/plots_IRIS_arcScores[[3]]/plots_IRIS_arcScores[[4]],
+        filename=paste0(rdir,"/Fig6a_arcscores_ST.pdf"))
+
+# plot global scores
+Score.tib = tibble(Sample=rep(sample_ids,each=4) , Arc = rep(c("Ca A1","Ca A2", "Ca B", "sc-enriched"),4),
+       Score = c( colMeans(adatas[[1]]@meta.data[,c("A1score","A2score","Bscore","SCscore")]),
+                  colMeans(adatas[[2]]@meta.data[,c("A1score","A2score","Bscore","SCscore")]),
+                  colMeans(adatas[[3]]@meta.data[,c("A1score","A2score","Bscore","SCscore")]),
+                  colMeans(adatas[[4]]@meta.data[,c("A1score","A2score","Bscore","SCscore")]) )
+)
+
+arc4 = c("Ca A1"="#999933" ,"Ca A2"="#DDCC77","Ca B"="#117733", "sc-enriched"="#CC6677" )
+ggplot(Score.tib,aes(x=Sample,y=Score,fill=Arc)) + geom_bar(stat="identity") + theme_classic() + scale_fill_manual(values=arc4)
+
+```
+
+# Copy number aberrations
+```{r}
+for(i in 1:4){ 
+  adatas[[i]]@meta.data$copykat.pred = as.numeric(factor(adatas[[i]]@meta.data$copykat.pred,levels=c("diploid","aneuploid") ))-1
+}
+
+
+ggCNST1 = SpatialFeaturePlot(adatas[[1]],features="copykat.pred")  + scale_fill_gradient(low=rgb(0.5,0.5,0.5,0.5),high="darkred") + guides(fill="none")
+ggCNST2 = SpatialFeaturePlot(adatas[[2]],features="copykat.pred") + scale_fill_gradient(low=rgb(0.5,0.5,0.5,0.5),high="darkred")+ guides(fill="none")
+ggCNST3 = SpatialFeaturePlot(adatas[[3]],features="copykat.pred") + scale_fill_gradient(low=rgb(0.5,0.5,0.5,0.5),high="darkred")+ guides(fill="none")
+ggCNST4 = SpatialFeaturePlot(adatas[[4]],features="copykat.pred") + scale_fill_gradient(low=rgb(0.5,0.5,0.5,0.5),high="darkred")+ guides(fill="none")
+
+ggsave(ggCNST1+ggCNST2+ggCNST3+ggCNST4,
+       filename = file.path(paste0(rdir,"/copykat_predictions.pdf")), 
+       width = 2.5*2,height=2.5*2)
+```
+
+# Association between domains, arcs, and cell types
+
+```{r}
+all( (IRIS_domain %>% filter(Slice=="Slice4"))$spotName == rownames(CARD_obj.arc@Proportion_CARD) ) # all in same order
+
+Arc_Domains = bind_rows(bind_cols(Sample="LNEN071",as_tibble(Prop.arcs.l[[1]]),
+                                  as_tibble(IRIS_object@IRIS_Prop%>% filter(Slice=="LNEN071-IARC-A")),
+                                  Domain = (IRIS_domain%>% filter(Slice=="Slice1"))$IRIS_domain) %>% dplyr::select(-c(Slice,spotName,x,y)) %>% 
+                          pivot_longer(c(`Ca B`:`Ca A1`,B:Serous),names_to = "Arc",values_to = "Proportion"),
+                        bind_cols(Sample="LNEN084",as_tibble(Prop.arcs.l[[2]]),
+                                  as_tibble(IRIS_object@IRIS_Prop%>% filter(Slice=="LNEN084-IARC-B")),
+                                  Domain = (IRIS_domain%>% filter(Slice=="Slice2"))$IRIS_domain) %>% dplyr::select(-c(Slice,spotName,x,y))%>% 
+                          pivot_longer(c(`Ca B`:`Ca A1`,B:Serous),names_to = "Arc",values_to = "Proportion"),
+                        bind_cols(Sample="LNEN107",as_tibble(Prop.arcs.l[[3]]),
+                                  as_tibble(IRIS_object@IRIS_Prop%>% filter(Slice=="LNEN107-IARC-C")),
+                                  Domain = (IRIS_domain%>% filter(Slice=="Slice3"))$IRIS_domain) %>% dplyr::select(-c(Slice,spotName,x,y))%>% 
+                          pivot_longer(c(`Ca B`:`Ca A1`,B:Serous),names_to = "Arc",values_to = "Proportion"),
+                        bind_cols(Sample="LNEN206",as_tibble(Prop.arcs.l[[4]]),
+                                  as_tibble(IRIS_object@IRIS_Prop%>% filter(Slice=="LNEN206-IARC-D")),
+                                  Domain = (IRIS_domain%>% filter(Slice=="Slice4"))$IRIS_domain) %>% dplyr::select(-c(Slice,spotName,x,y))%>% 
+                          pivot_longer(c(`Ca B`:`Ca A1`,B:Serous),names_to = "Arc",values_to = "Proportion") )
+
+Arc_Domains.means = Arc_Domains %>% mutate(Type=case_when(Arc %in% c("Ca A1","Ca A2","Ca B","sc-enriched")~"Archetype",
+                                                          TRUE~"CellType")) %>% 
+  group_by(Sample,Domain,Arc,Type) %>% summarize(Proportion=mean(Proportion),n=n()) 
+Arc_Domains.means.domainorder = Arc_Domains.means %>% filter(Arc=="sc-enriched") %>% arrange(-Proportion) %>% pull(Domain) %>% unique()
+Arc_Domains.means = Arc_Domains.means %>% mutate( Domain = factor(Domain,levels=Arc_Domains.means.domainorder) )
+
+ggarcdomsum = ggplot(Arc_Domains,aes(x=factor(Domain),y=Proportion,fill=Arc)) + geom_bar(stat="identity") + facet_grid(.~Sample,scales = "free_x") + theme_classic() #
+ggarcdommean = ggplot(Arc_Domains.means%>% filter(n>=10),aes(x=factor(Domain),y=Proportion,fill=Arc)) + geom_bar(stat="identity") + facet_grid(Type~Sample,scales = "free_x")+ theme_classic()
+
+Arc_Domains
+
+ggarcdomsum+ggarcdommean 
+#71: 0, 9, 14, 2, 4, 15
+#84: 11
+#107: 3, 6, 18, 17
+#206: 17
+
+# get domain with highest prop for each cell type
+maincelldom = data.frame("Arc"=NULL,D1=NULL,D2=NULL,D3=NULL,D4=NULL,D5=NULL)
+for(x in unique(Arc_Domains$Arc)){
+  maincelldom = rbind(maincelldom,c(x,
+  (Arc_Domains %>% filter(Arc==x) %>% arrange(-Proportion) %>% pull(Domain) %>% unique() )[1:5]) #11
+  )
+}
+```
+
+#### Select most representative supra-carcinoid spots and run music
+
+```{r}
+library(MuSic)
+LNEN071_sctumor_spots = read.csv("Z://lungNENomics/work/alcalan/tomoveto_Descriptive_manuscript_data/spatial/LNEN071_spots_supraca.csv")
+LNEN084_sctumor_spots = read.csv("Z://lungNENomics/work/alcalan/tomoveto_Descriptive_manuscript_data/spatial/LNEN084_spots_supraca.csv")
+LNEN107_sctumor_spots = read.csv("Z://lungNENomics/work/alcalan/tomoveto_Descriptive_manuscript_data/spatial/LNEN107_spots_supraca.csv")
+LNEN206_sctumor_spots = read.csv("Z://lungNENomics/work/alcalan/tomoveto_Descriptive_manuscript_data/spatial/LNEN206_spots_supraca.csv")
+
+LNENs.ST[[1]]@meta.data$spotid = rownames(LNENs.ST[[1]]@meta.data)
+LNENs.ST[[2]]@meta.data$spotid = rownames(LNENs.ST[[2]]@meta.data)
+LNENs.ST[[3]]@meta.data$spotid = rownames(LNENs.ST[[3]]@meta.data)
+LNENs.ST[[4]]@meta.data$spotid = rownames(LNENs.ST[[4]]@meta.data)
+
+## find common features between sc and ST
+common_features = intersect(rownames(sobj_ref@assays$RNA$counts),rownames(LNENs.ST[[1]]@assays$Spatial$counts) )
+LNEN071_sctumor_spots = LNEN071_sctumor_spots %>% arrange(barcode)
+LNEN084_sctumor_spots = LNEN084_sctumor_spots %>% arrange(barcode)
+LNEN107_sctumor_spots = LNEN107_sctumor_spots %>% arrange(barcode)
+LNEN206_sctumor_spots = LNEN206_sctumor_spots %>% arrange(barcode)
+
+library(SingleCellExperiment)
+counts = cbind(sobj_ref@assays$RNA$counts[common_features,],
+                               LNENs.ST[[1]][common_features,LNEN071_sctumor_spots$barcode]@assays$Spatial$counts,
+                               LNENs.ST[[2]][common_features,LNEN084_sctumor_spots$barcode]@assays$Spatial$counts,
+                               LNENs.ST[[3]][common_features,LNEN107_sctumor_spots$barcode]@assays$Spatial$counts,
+                               LNENs.ST[[4]][common_features,LNEN206_sctumor_spots$barcode]@assays$Spatial$counts)
+
+colData = bind_rows(ref_meta,
+                      data.frame(Patient.ID="LNEN071",Cell_types_NE=LNEN071_sctumor_spots$annotation,
+                                 Lineage=LNEN071_sctumor_spots$Lineage,row.names=LNEN071_sctumor_spots$barcode),
+                      data.frame(Patient.ID="LNEN084",Cell_types_NE=LNEN084_sctumor_spots$annotation,
+                                 Lineage=LNEN084_sctumor_spots$Lineage,row.names=LNEN084_sctumor_spots$barcode),
+                      data.frame(Patient.ID="LNEN107",Cell_types_NE=LNEN107_sctumor_spots$annotation,
+                                 Lineage=LNEN107_sctumor_spots$Lineage,row.names=LNEN107_sctumor_spots$barcode),
+                      data.frame(Patient.ID="LNEN206",Cell_types_NE=LNEN206_sctumor_spots$annotation,
+                                 Lineage=LNEN206_sctumor_spots$Lineage,row.names=LNEN206_sctumor_spots$barcode)) 
+
+colnames(counts)[which(colnames(counts)!=rownames(colData))] = rownames(colData)[which(colnames(counts)!=rownames(colData))] #paste0(colnames(counts)[which(colnames(counts)!=rownames(colData))],
+                                                               "...",which(colnames(counts)!=rownames(colData)))
+
+sceobj_ref = SingleCellExperiment(
+  assays = list(counts = counts),
+  colData = colData ,
+  rowData = DataFrame(common_features)
+  )
+
+
+Est.prop = music_prop(bulk.mtx = as.matrix(gene_count_matrix[,-1]), 
+                      clusters = 'Cell_types_NE',
+                      #group.markers = list(),
+                      #groups = "Lineage",
+                      samples = 'Patient.ID', 
+                      clusters.type = c("T_conv","T_CD8","NK","T/NK_proliferating","B","Plasma",
+                                               "Monocyte","Myeloid","Macrophage","Macrophage_proliferating","cDC","pDC","Mast",
+                                    "Endothelial_Bronchial","Endothelial_Artery","Endothelial_Vein","Endothelial_Capillary","Lymphatic",
+                                    "Fibro","Myofibro","Muscle_Vascular","Muscle_Airway","Pericyte","Mesothelial",
+                                    "Basal","Lower Airway Progenitor","Serous","Club","Multiciliated",
+                                    "Neuroendocrine NIBAN1+","Neuroendocrine CALML3+","Neuroendocrine APCDD1+",
+                                    "Neuroendocrine CALCA+","Neuroendocrine NEUROD1+",
+                                    "supra-ca_tumor","supra-ca_TME"),sc.sce = sceobj_ref, 
+                      verbose = TRUE)
+  
+save( Est.prop, file="Z://lungNENomics/work/alcalan/tomoveto_Descriptive_manuscript_data/spatial/music_STspotsNoah2.Rdata" )
+```
+
+```{r}
+Est.prop.noNE = music_prop(bulk.mtx = as.matrix(gene_count_matrix[,-1]), 
+                      clusters = 'Cell_types_NE',
+                      #group.markers = list(),
+                      #groups = "Lineage",
+                      samples = 'Patient.ID', 
+                      select.ct = c("T_conv","T_CD8","NK","T/NK_proliferating","B","Plasma",
+                                               "Monocyte","Myeloid","Macrophage","Macrophage_proliferating","cDC","pDC","Mast",
+                                    "Endothelial_Bronchial","Endothelial_Artery","Endothelial_Vein","Endothelial_Capillary","Lymphatic",
+                                    "Fibro","Myofibro","Muscle_Vascular",
+                                    #"Muscle_Airway",
+                                    "Pericyte","Mesothelial",
+                                    #"Basal",
+                                    #"Lower Airway Progenitor",
+                                    #"Serous",
+                                    #"Club",
+                                    #"Multiciliated",
+                                    #"Neuroendocrine NIBAN1+","Neuroendocrine CALML3+","Neuroendocrine APCDD1+",
+                                    #"Neuroendocrine CALCA+","Neuroendocrine NEUROD1+",
+                                    "supra-ca_tumor","supra-ca_TME"),sc.sce = sceobj_ref, 
+                      verbose = TRUE)
+  
+save( Est.prop.noNE, file="Z://lungNENomics/work/alcalan/tomoveto_Descriptive_manuscript_data/spatial/music_STspotsNoahnoNE3.Rdata" )
+
+```
+
+```{r}
+Est.prop.cluster = music_prop.cluster(bulk.mtx = as.matrix(gene_count_matrix[,-1]), 
+                      clusters = 'Cell_types_NE',
+                      group.markers = list(),
+                      groups = "Lineage",
+                      samples = 'Patient.ID', 
+                      clusters.type = c("T_conv","T_CD8","NK","T/NK_proliferating","B","Plasma",
+                                               "Monocyte","Myeloid","Macrophage","Macrophage_proliferating","cDC","pDC","Mast",
+                                    "Endothelial_Bronchial","Endothelial_Artery","Endothelial_Vein","Endothelial_Capillary","Lymphatic",
+                                    "Fibro","Myofibro","Muscle_Vascular","Muscle_Airway","Pericyte","Mesothelial",
+                                    "Basal","Lower Airway Progenitor","Serous","Club","Multiciliated",
+                                    "Neuroendocrine NIBAN1+","Neuroendocrine CALML3+","Neuroendocrine APCDD1+",
+                                    "Neuroendocrine CALCA+","Neuroendocrine NEUROD1+",
+                                    "supra-ca_tumor","supra-ca_TME"),sc.sce = sceobj_ref, 
+                      verbose = TRUE)
+  
+save( Est.prop.cluster, file="Z://lungNENomics/work/alcalan/tomoveto_Descriptive_manuscript_data/spatial/music_cluster_STspotsNoah.Rdata" )
+```
+
+
+# Additional analyses 
+### Cluster spots and do crude annotation
+
+```{r, process other data for DR }
+LNENs.ST = lapply(adatas, function(x) NormalizeData(x,  normalization.method = "LogNormalize", scale.factor = 10000))
+LNENs.ST = lapply(LNENs.ST, function(x) FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000) )
+LNENs.ST = lapply(LNENs.ST, function(x) ScaleData(x, features =  rownames(x) ))
+LNENs.ST = lapply(LNENs.ST, function(x) RunPCA(x, features = VariableFeatures(object = x) ) )
+```
+
+We look at the PCA elbow plot to determine the dimension of the data
+```{r}
+ElbowPlot(LNENs.ST[[1]]) #15 is good
+ElbowPlot(LNENs.ST[[2]])
+ElbowPlot(LNENs.ST[[3]])
+ElbowPlot(LNENs.ST[[4]])
+```
+
+15 seems good for all samples
+
+```{r}
+LNENs.ST = lapply(LNENs.ST, function(x) FindNeighbors(x, dims = 1:15))
+LNENs.ST = lapply(LNENs.ST, function(x) FindClusters(x, resolution = 0.5))
+LNENs.ST = lapply(LNENs.ST, function(x) RunUMAP(x, dims = 1:15))
+
+svg("UMAP_ST_lungNENomics.svg",height=3.5,width=3.5*4)
+par(mfrow=c(1,4))
+DimPlot(LNENs.ST[[1]], reduction = "umap") # very homogeneous
+DimPlot(LNENs.ST[[2]], reduction = "umap") # spots seem quite clustered
+DimPlot(LNENs.ST[[3]], reduction = "umap") # spots seem quite clustered
+DimPlot(LNENs.ST[[4]], reduction = "umap") # very homogeneous
+dev.off()
+```
+
+```{r}
+LNENs.ST.markers = lapply(LNENs.ST, function(x) FindAllMarkers(x, only.pos = TRUE) )
+LNENs.ST.markers[[1]] %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1)
+```
+
+Write as anndata for python 
+```{r}
+for(i in 1:4){
+  LNENs.ST[[i]][["Spatial3"]] <- as(object = LNENs.ST[[i]][["Spatial"]], Class = "Assay")
+  Seurat::DefaultAssay(LNENs.ST[[i]]) <- "Spatial3"
+  LNENs.ST[[i]][["Spatial"]] <- NULL
+  LNENs.ST[[i]] <- SeuratObject::RenameAssays(LNENs.ST[[i]], Spatial3 = 'Spatial')
+  LNENs.ST[[i]]@assays$Spatial$data = LNENs.ST[[i]]@assays$Spatial$counts
+  
+  SaveH5Seurat(LNENs.ST[[i]],filename = paste0(sample_ids[i],".h5Seurat"), verbose = T,overwrite = T)
+  Convert(source = paste0(sample_ids[i],".h5Seurat"), dest = "h5ad", 
+        assay = "Spatial", verbose=TRUE,overwrite = T)
+}
+```
+
+# Deconvolution
+
+## Function of deconvolution using CARD
+```{r}
+do_CARD = function(sample_id, adatas, sobj_ref, ref_meta, ctype_col = "Cell_types_NE"){
+  #' 
+  #' @param sample_id a string of sample id 
+  #' @param adatas a list of Seurat object, each element is one sample. The list 
+  #' is named by sample ids
+  #' @param sobj_ref a Seurat obejct of single-cell reference 
+  #' @param ref_meta a data frame of cell annotation for single-cell reference
+  #' @param ctype_col a string of column name in the ref_meta that represents the
+  #' cell-types
+  #' @return Return a CARD object of a given sample
+  #'
+  #' @export
+  #'
+  adata = adatas[[sample_id]]
+  # ST
+  # ST counts
+  counts = adata[["Spatial"]]$counts
+  # ST coordinates
+  coords = GetTissueCoordinates(adata)
+  colnames(coords) = c("x", "y")
+
+  # SC counts
+  sc_count = sobj_ref@assays$RNA$counts
+  
+  # create CARD object
+  # https://rdrr.io/github/YingMa1993/CARD/man/createCARDObject.html
+  CARD_obj = createCARDObject(
+    sc_count = sc_count,
+    sc_meta = ref_meta,
+	  spatial_count = counts,
+	  spatial_location = coords,
+	  ct.varname = ctype_col,
+    ct.select = unique(ref_meta[ctype_col]),#sobj_ref[[ctype_col]] %>% unique() %>% unlist(),
+	  sample.varname = "sample_id",
+	  minCountGene = 100,
+	  minCountSpot = 5
+	)
+  
+  # deconvolution
+  # https://rdrr.io/github/YingMa0107/CARD/man/CARD_deconvolution.html
+  CARD_obj = CARD_deconvolution(CARD_object = CARD_obj)
+  
+  # imputation
+  # https://rdrr.io/github/YingMa0107/CARD/man/CARD.imputation.html
+  CARD_obj = CARD.imputation(CARD_obj, NumGrids = 2000, ineibor = 10, exclude = NULL)
+  return(CARD_obj)
+}
+```
+
+## 2.2 Cell type deconvolution for normal cells
+```{r}
+# list of normal cell Seurat objests
+#normal_adatas = lapply(adatas, function(adata){
+#  adata = adata[, adata$copykat.pred == "diploid"]
+#  return(adata)
+#})
+
+# Save data
+# save(normal_ref, file = file.path(rdir, "04input_normal_ref_05282024.Rdata"))
+# save(normal_ref_meta, file = file.path(rdir, "04input_normal_ref_meta_05282024.Rdata"))
+# save(normal_adatas, file = file.path(rdir, "04input_normal_adatas_05282024.Rdata"))
+# save(sample_ids, file = file.path(rdir, "04input_sample_ids_05282024.Rdata"))
+
+# Deconvolution
+normal_card_objs = lapply(setNames(sample_ids, sample_ids), function(sample_id){
+  CARD_obj = do_CARD(sample_id, adatas, sobj_ref, ref_meta, "Cell_types_NE")
+  return(CARD_obj)
+})
+
+# Save result
+save(normal_card_objs, file = file.path(rdir, "normal_card_objs_MainCellTypes_NoahRef_10092024.Rdata"))
+```
+
+
+## 2.3 Visualization
+
+```{r}
+# Load data if needed
+#load(file.path(rdir, "normal_card_objs_MainCellTypes_NoahRef_10092024.Rdata"))
+#tumor_adatas = lapply(adatas, function(adata){
+#  adata = adata[, adata$copykat.pred == "aneuploid"]
+#  return(adata)
+#})
+
+plot_CARD = function(sample_id, normal_card_objs, plot_type = "pie", spot_size = 3){
+  #' 
+  #' @param sample_id a string of sample id
+  #' @param normal_card_objs a list of CARD object of normal cells, each element 
+  #' is one sample. The list is named by sample ids
+  #' @param plot_type a string indictaes that type of plot you want to generate.
+  #' default: "pie"
+  #' @return Return a ggplot object of pie chart
+  #'
+  #' @export
+  #'
+  
+ if(plot_type == "pie"){
+    p1 = CARD.visualize.pie(
+	    proportion = normal_card_objs[[sample_id]]@Proportion_CARD,                         
+	    spatial_location = normal_card_objs[[sample_id]]@spatial_location,            
+	    radius = spot_size) + 
+    labs(title = sample_id)
+    ggsave(
+      p1, 
+      filename = file.path(paste0(rdir,"/CARD_pie_", sample_id, "_Noah_CellTypeNE.png")), 
+      width = 12
+    )
+  }else if(plot_type == "proportion"){
+    p1 = CARD.visualize.prop(
+	    proportion = normal_card_objs[[sample_id]]@Proportion_CARD,                         
+	    spatial_location = normal_card_objs[[sample_id]]@spatial_location,            
+	    ct.visualize = names( sort(colSums(normal_card_objs[[sample_id]]@Proportion_CARD),decreasing = T) ), #colnames(normal_card_objs[[sample_id]]@Proportion_CARD),                    
+	    colors = c("lightblue","lightyellow","red"), 
+	    pointSize = spot_size,
+	    NumCols = 6)
+    ggsave(p1, 
+      filename = file.path(paste0(rdir,"/CARD_proportions_", sample_id, "_Noah_CellTypeNE.png")), 
+      width = 2.5*6,height=2.5*6)
+    
+    #NE cell types 2 by 2 
+    p3.1 = CARD.visualize.prop.2CT(
+      proportion = normal_card_objs[[sample_id]]@Proportion_CARD,                         
+	    spatial_location = normal_card_objs[[sample_id]]@spatial_location, 
+      ct2.visualize = c("Lower Airway Progenitor","Neuroendocrine CALCA+"),              ### two cell types you want to visualize
+      colors = list(c("lightblue","lightyellow","red"),c("lightblue","lightyellow","black")))       ### two color scales    
+    p3.2 = CARD.visualize.prop.2CT(
+      proportion = normal_card_objs[[sample_id]]@Proportion_CARD,                         
+	    spatial_location = normal_card_objs[[sample_id]]@spatial_location, 
+      ct2.visualize = c("Lower Airway Progenitor","Neuroendocrine NEUROD1+"),              ### two cell types you want to visualize
+      colors = list(c("lightblue","lightyellow","red"),c("lightblue","lightyellow","black"))) 
+    p3.3 = CARD.visualize.prop.2CT(
+      proportion = normal_card_objs[[sample_id]]@Proportion_CARD,                         
+	    spatial_location = normal_card_objs[[sample_id]]@spatial_location, 
+      ct2.visualize = c("Neuroendocrine CALCA+","Neuroendocrine NEUROD1+"),              ### two cell types you want to visualize
+      colors = list(c("lightblue","lightyellow","red"),c("lightblue","lightyellow","black"))) 
+    ggsave(p3.1+p3.2+p3.3,
+      filename = file.path(paste0(rdir,"/CARD_proportions2CT_", sample_id, "_Noah_CellTypeNE.png")), 
+      width = 6*3,height=6)
+  }else{
+    stop("Invalid plot_type")
+  }
+    
+  p4 <- CARD.visualize.Cor(normal_card_objs[[sample_id]]@Proportion_CARD,colors = NULL)
+  ggsave(p4,
+      filename = file.path(paste0(rdir,"/CARD_proportionscor_", sample_id, "_Noah_CellTypeNE.png")), 
+      width = 2.5*5,height=2.5*5)
+    return(p1)
+}
+
+# Generate pie charts for all samples
+pie_charts = lapply(sample_ids, function(sample_id){
+  plot_CARD(sample_id, normal_card_objs, plot_type = "pie", spot_size = 15)
+})
+
+# Generate proportion graphs for all sampels
+prop_graphs = lapply(sample_ids, function(sample_id){
+  plot_CARD(sample_id, normal_card_objs, plot_type = "proportion", spot_size = 0.3)
+})
+```
+
+
+## Refine spatial map
+
+```{r}
+for(i in 1:length(normal_card_objs)){
+ normal_card_objs[[i]] = CARD.imputation(normal_card_objs[[i]],NumGrids = 2000,ineibor = 10,exclude = NULL) 
+}
+
+## Visualize the newly grided spatial locations to see if the shape is correctly detected. If not, the user can provide the row names of the excluded spatial location data into the CARD.imputation function
+for(i in 1:length(normal_card_objs)){
+  location_imputation = cbind.data.frame(x=as.numeric(sapply(strsplit(rownames(normal_card_objs[[i]]@refined_prop),split="x"),"[",1)),
+	  y=as.numeric(sapply(strsplit(rownames(normal_card_objs[[i]]@refined_prop),split="x"),"[",2)))
+  rownames(location_imputation) = rownames(normal_card_objs[[i]]@refined_prop)
+
+  p5 <- ggplot(location_imputation, 
+       aes(x = x, y = y)) + geom_point(shape=22,color = "#7dc7f5")+
+  theme(plot.margin = margin(0.1, 0.1, 0.1, 0.1, "cm"),
+    legend.position="bottom",
+    panel.background = element_blank(),
+    plot.background = element_blank(),
+    panel.border = element_rect(colour = "grey89", fill=NA, size=0.5))
+  ggsave(p5, 
+      filename = file.path(paste0(rdir,"/CARD_proportionsrefinedQClocations_", sample_ids[i], "_Noah_CellTypeNE.png")), 
+      width = 2.5*3,height=2.5*3)
+  
+  p6 <- CARD.visualize.prop(
+	proportion = normal_card_objs[[i]]@refined_prop,                         
+	spatial_location = location_imputation,            
+	ct.visualize = names( sort(colSums(normal_card_objs[[i]]@Proportion_CARD),decreasing = T) ),                    
+	colors = c("lightblue","lightyellow","red"),    
+	NumCols = 6)         
+	ggsave(p6, 
+      filename = file.path(paste0(rdir,"/CARD_proportionsrefined_", sample_ids[i], "_Noah_CellTypeNE.png")), 
+      width = 2.5*6,height=2.5*6)
+}
+```
+
+### Single cell resolution mapping
+```{r }
+scMapping = lapply(1:length(normal_card_objs), function(i) CARD_SCMapping(normal_card_objs[[i]],shapeSpot="Square",numCell=20,ncore=2) )
+print(scMapping)
+### spatial location info and expression count of the single cell resolution data
+library(SingleCellExperiment)
+MapCellCords = as.data.frame(colData(scMapping))
+count_SC = assays(scMapping)$counts
+
+library(ggplot2)
+df = MapCellCords
+colors = c("#8DD3C7","#CFECBB","#F4F4B9","#CFCCCF","#D1A7B9","#E9D3DE","#F4867C","#C0979F",
+	"#D5CFD6","#86B1CD","#CEB28B","#EDBC63","#C59CC5","#C09CBF","#C2D567","#C9DAC3","#E1EBA0",
+	"#FFED6F","#CDD796","#F8CDDE")
+p10 = ggplot(df, aes(x = x, y = y, colour = CT)) + 
+    geom_point(size = 3.0) +
+    scale_colour_manual(values =  colors) +
+    #facet_wrap(~Method,ncol = 2,nrow = 3) + 
+        theme(plot.margin = margin(0.1, 0.1, 0.1, 0.1, "cm"),
+              panel.background = element_rect(colour = "white", fill="white"),
+              plot.background = element_rect(colour = "white", fill="white"),
+    legend.position="bottom",
+    panel.border = element_rect(colour = "grey89", fill=NA, size=0.5),
+    axis.text =element_blank(),
+    axis.ticks =element_blank(),
+    axis.title =element_blank(),
+    legend.title=element_text(size = 13,face="bold"),
+    legend.text=element_text(size = 12),
+    legend.key = element_rect(colour = "transparent", fill = "white"),
+    legend.key.size = unit(0.45, 'cm'),
+    strip.text = element_text(size = 15,face="bold"))+
+                                guides(color=guide_legend(title="Cell Type"))
+print(p10)
+```
+
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
