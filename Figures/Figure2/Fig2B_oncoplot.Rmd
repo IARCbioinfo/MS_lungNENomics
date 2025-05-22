@@ -9,18 +9,19 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Figure 1 panel B: Driver mutations associated with archetypes or types - oncoplot
+# Figure 2 panel B: Driver mutations associated with archetypes or types - oncoplot
 
 This document produces panel B from Figure 2 from the lungNENomics manuscript, which displays the oncoplot of driver genomic alterations.
 
 # Load files
 ## Load libraries
 
-```{r pressure, echo=FALSE}
+```{r library, echo=FALSE}
 library(dplyr)
 library(tidyr)
 library(readr)
 library(ggplot2)
+library(tidyverse)
 ```
 
 ## Load datasets
@@ -41,9 +42,6 @@ var_cli = bind_rows(var_cli,tibble(sample_id=c("LCNEC3T","LCNEC4T"),group="LCNEC
 ```{r}
 drivers <- read.table(file="/data/lungNENomics/work/Descriptive_manuscript_data/WGS_data/drivers_final.tsv", header=TRUE)
 driver_table <- data.frame("gene_name" = sort(unique(drivers$SYMBOL)))
-
-#load("A:/work/Descriptive_manuscript_data/RNA_sequencing_data/gene_TPM_matrix_PCA_LCNEC_SCLC_ITH_TR.RData") # TPM data
-#load("A:/work/Descriptive_manuscript_data/MOFA/MOFA.Exp.Meth.Alt.CNV_lungNENomicsCombined/ParetoTI/variables_archetypes_MOFA_LNET.RData") # archetypes
 
 load("/data/lungNENomics/work/Descriptive_manuscript_data/WGS_data/dataset_snv_dmg_lungNENomicsCombined.RData") # SNV data
 load("/data/lungNENomics/work/Descriptive_manuscript_data/WGS_data/dataset_sv_dmg_lungNENomicsCombined.RData") # SV data
@@ -417,25 +415,164 @@ colnames(oncoplot_temp)[12:ncol(oncoplot_temp)] <- c("+7p" , "+14p" , "+5q",  "+
 gistic_events[gistic_events$sample_id %in% var_cli[var_cli$archetype == "sc-enriched",]$sample_id,]
 ```
 
-add WGS - shattered regions (Upload from table S12)
+### Shattered regions
+We compute the shattered regions using package svpluscnv
 ```{r}
-library(readxl)
-large_genomic_events <- read_excel("/data/lungNENomics/work/Descriptive_manuscript_data/WGS_data/Supplementary_Table_S12.xlsx", skip = 2, n_max = 145 )
-dim(dataset_SNV_dmg)
-dim(large_genomic_events)
-setdiff(dataset_SNV_dmg$sample_id, large_genomic_events$sample_id)
+library(svpluscnv)
 
-setdiff(large_genomic_events$sample_id, dataset_SNV_dmg$sample_id)
-length(setdiff(large_genomic_events$sample_id, dataset_SNV_dmg$sample_id)) # 43 sample_id include in table S12 not in Gistic or IntOGen Exp 
-var_LNET[var_LNET$sample_id %in% setdiff(large_genomic_events$sample_id, dataset_SNV_dmg$sample_id),  ]  # this 43 samples are not in Var_LNET > So we exclude them!
+# load cnvs
+load("/data/lungNENomics/work/Descriptive_manuscript_data/Copy_number_data/dataset_purple_PCA_LCNEC_ITH.RData")
+CNVs = dataset_purple
+
+# load SVs
+dataset_SV <- read.table("/data/lungNENomics/work/alcalan/WGS/structural_variants/latest/SVs_annotated_somatic_PONfiltered.tsv", header=TRUE) # 8,558 SVs
+# Filter out germline SVs ----
+table(dataset_SV$nb_germline_100bp)
+dataset_SV <- dataset_SV[!duplicated(dataset_SV[,c("ID","Sample_name")]),] %>% filter(nb_germline_100bp==0)
+
+dim(dataset_SV) # 4499   18
+length(unique(dataset_SV$Sample_name)) # 150
+
+# format input
+## format cnvs
+# sample, chrom, start, end, probes, segmean
+cnv.svpluscnv = CNVs %>% mutate(segmean=log(copyNumber.corrected+0.01,2)-1) %>% 
+  dplyr::select(sample_id,seqnames,start,end,bafCount,segmean) %>% dplyr::rename("sample"="sample_id","chromosome"="seqnames","probes"="bafCount")
+
+## format svs
+# sample, chrom1, pos1, strand1, chrom2, pos2, strand2 & svclass
+sv.svpluscnv = dataset_SV %>% 
+  mutate(strand1=substring(STRANDS,1,1),strand2=substring(STRANDS,2,2)) %>% 
+  dplyr::select(Sample_name,CHROM,start.B1,strand1,CHROM2,start.B2,strand2,SVTYPE) %>%
+  dplyr::rename("sample"=Sample_name,"chrom1"=CHROM,"pos1"=start.B1, "chrom2"=CHROM2, "pos2"=start.B2, "svclass"=SVTYPE)
+
+# check data
+sv.svpluscnv$sample = str_remove(sv.svpluscnv$sample,"_T$")
+sv.svpluscnv$sample = str_replace(sv.svpluscnv$sample,"-","_")
+sort( unique(cnv.svpluscnv$sample)[!unique(cnv.svpluscnv$sample) %in% unique(sv.svpluscnv$sample)] ) #samples without SVs
+sort(unique(sv.svpluscnv$sample)[!unique(sv.svpluscnv$sample) %in% unique(cnv.svpluscnv$sample)]) # non LNET samples
+
+sv.svpluscnv2 = sv.svpluscnv %>% filter( sample %in% unique(cnv.svpluscnv$sample)) # filter out non LNET samples
+sort( unique(cnv.svpluscnv$sample)[!unique(cnv.svpluscnv$sample) %in% unique(sv.svpluscnv2$sample)] ) #samples without SVs
+sort(unique(sv.svpluscnv2$sample)[!unique(sv.svpluscnv2$sample) %in% unique(cnv.svpluscnv$sample)]) # non LNET samples
+
+cnv = validate.cnv(cnv.svpluscnv)
+svc = validate.svc(sv.svpluscnv2) ## looks good
+
+# CNV analysis
+cnv_freq <- cnv.freq(cnv, fc.pct = 0.2, ploidy = FALSE, plot=TRUE)
+charm.mat <- chr.arm.cnv(cnv, genome.v = "hg38", verbose = FALSE)
+require(gplots)
+heatmap(charm.mat[order(rownames(charm.mat))[1:42],],Rowv=NA,trace='none',cexCol=.5, lhei=c(0.25,1), dendrogram='col', key.title="Copy number",
+          col=colorRampPalette(c("blue","white","red"))(256))
+pct_change <- pct.genome.changed(cnv, fc.pct = 0.2)
+barplot(sort(pct_change,decreasing=T),las=2)
+
+# breakpoint burden 
+## define breakpoints from SV data
+svc_breaks  <- svc.breaks(svc)  
+
+## define breakpoints from cnv data based on certain CNV log-ratio change cutoff
+cnv_breaks  <- cnv.breaks(cnv,fc.pct = 0.2,verbose=FALSE)  
+
+## scatter plot comparing CNV and SV breakpoint burden and percent genome changed, for a set of common samples
+common_samples <- intersect(names(svc_breaks@burden),names(cnv_breaks@burden))
+dat1 <- log2(1+cbind(svc_breaks@burden[common_samples],
+                     cnv_breaks@burden[common_samples]))
+
+dat2 <- log2(1+cbind(pct_change, 
+                     cnv_breaks@burden[names(pct_change)]))
+
+par(mfrow=c(1,2))
+plot(dat1, xlab="log2(1+SV break count)", ylab="log2(1+CNV break count)")
+legend("bottomright",paste("Spearman's cor=",sprintf("%.2f",cor(dat1,method="spearman")[1,2]), sep=""))
+plot(dat2, xlab="percentage genome changed", ylab="log2(1+CNV break count)")
+legend("bottomright",paste("Spearman's cor=",sprintf("%.2f",cor(dat2,method="spearman")[1,2]), sep=""))
+
+## co localization of breakpoints 
+common.breaks <- match.breaks(cnv_breaks, svc_breaks, maxgap=1000000, verbose=T,plot = TRUE)
+common.breaks
+
+# identification of shattered regions
+## It is important to make sure the input data.frame has no factors
+library(taRifx)
+cnv.svpluscnv2 <- remove.factors(cnv.svpluscnv)
+sv.svpluscnv2 <- remove.factors(sv.svpluscnv)
+all(cnv.svpluscnv2 == cnv.svpluscnv,na.rm=T) # fine 
+all(sv.svpluscnv2 == sv.svpluscnv,na.rm=T) # fine
+# remove likely artifacts from segmentation data and fill gaps in the segmentation data (optional)
+#cnv_clean <- clean.cnv.artifact(cnv, verbose=TRUE,n.reps = 4,fill.gaps = TRUE)  
+## identification
+shatt <- shattered.regions(cnv, svc, verbose=TRUE,num.cnv.breaks = 1,num.svc.breaks = 1)
+
+source("shattered.regions2.R") 
+shatt_noCNV <- shattered.regions2(cnv, svc, verbose=TRUE,num.cnv.breaks = 1,num.svc.breaks = 20, num.common.sd=0, num.common.breaks = 0)# identification only from SVs, restricted to regions with very high SV counts
+shatt_noSV <- shattered.regions2(cnv, svc, verbose=TRUE,num.cnv.breaks = 20,num.svc.breaks = 1, num.common.sd=0, num.common.breaks = 0)# identification only from CNVs, restricted to regions with very high CNV counts => no such regions
+
+# remove redundant regions (with overlapping start or end), keep one identified ith CNVs and SVs
+shatt_lungNENomics = shatt@regions.summary
+for(i in 1:length(shatt_lungNENomics)) shatt_lungNENomics[[i]]$sample = names(shatt_lungNENomics)[i]
+shatt_lungNENomics = bind_rows(shatt_lungNENomics)
+
+shatt_lungNENomics_noCNV = shatt_noCNV@regions.summary
+for(i in 1:length(shatt_lungNENomics_noCNV)) shatt_lungNENomics_noCNV[[i]]$sample = names(shatt_lungNENomics_noCNV)[i]
+shatt_lungNENomics_noCNV = bind_rows(shatt_lungNENomics_noCNV)
+
+isoverlap = sapply(1:nrow(shatt_lungNENomics_noCNV),function(i){ return( shatt_lungNENomics %>% 
+    filter(sample==shatt_lungNENomics_noCNV$sample[i],start<=shatt_lungNENomics_noCNV$end[i] , end >=shatt_lungNENomics_noCNV$start[i]) %>% nrow()) } )
+
+shatt_lungNENomics = rbind(shatt_lungNENomics,shatt_lungNENomics_noCNV[isoverlap==0,]) #
+
+shatt_lungNENomics$conf[shatt_lungNENomics$n.brk.cnv <7] = "LC"
+shatt_lungNENomics$conf[shatt_lungNENomics$n.brk.sv <7]  = "LC"
+
+shatt_lungNENomics %>% filter(conf=="HC")
+
+shatt_lungNENomics = shatt_lungNENomics %>% arrange(sample,chrom,-(n.brk.cnv+n.brk.sv))
+```
+
+Plot Fig S11 and write results presented in Table S17
+```{r}
+shatt.tot = shatt
+shatt.tot@regions.summary = lapply(unique(shatt_lungNENomics$sample),function(x) shatt_lungNENomics %>% filter(sample==x) )
+names(shatt.tot@regions.summary) = unique(shatt_lungNENomics$sample)
+
+pdf("FigS11_shattered_regions.pdf",height = 5*2.5,width = 4*2.5)
+par(mfrow=c(5,4))
+#circ.wg.plot(cnv,svc,sample.id = "LNET10T")
+for(x in unique(shatt_lungNENomics$sample)){
+  circ.chromo.plot(shatt.tot,genome.v = "hg38",sample.id = x)  
+}
+dev.off()
+
+# write results
+write_tsv(x = shatt_lungNENomics,file = "TableS17_shattered_regions.tsv")
+```
+
+
+add WGS - shattered regions to the dataset (Table S17)
+```{r}
+shatt_lungNENomics.summary = shatt_lungNENomics %>% group_by(sample) %>% summarize(shattered_region = case_when(any(conf=="HC")~"HC", any(conf=="LC")~"LC"))
+
+library(readxl)
+load("/data/lungNENomics/work/Descriptive_manuscript_data/Copy_number_data/dataset_purity_PCA_LCNEC_ITH.RData")
+dataset_purity$tumor_id = str_remove(dataset_purity$tumor_id,"_T$")
+#merge with shattered
+shatt_lungNENomics.summary$sample[!shatt_lungNENomics.summary$sample %in% dataset_purity$tumor_id] # all good
+
+large_genomic_events = left_join(dataset_purity,shatt_lungNENomics.summary,by=c(tumor_id="sample"))
+
+length(setdiff(large_genomic_events$sample_id, dataset_SNV_dmg$sample_id)) # 43 sample_id included in table S12 not in Gistic or IntOGen Exp 
+var_LNET[var_LNET$sample_id %in% setdiff(large_genomic_events$sample_id, dataset_SNV_dmg$sample_id),  ]  # this 43 samples are not in Var_LNET (not LNETs) > So we exclude them
 ```
 
 Format large_genomic_events
 ```{r}
-large_genomic_events <- large_genomic_events %>% dplyr::select(sample_id, wholeGenomeDuplication, shattered_regions_presence)
+large_genomic_events <- large_genomic_events %>% dplyr::select(sample_id, wholeGenomeDuplication, shattered_region)
 large_genomic_events$wholeGenomeDuplication <- ifelse(large_genomic_events$wholeGenomeDuplication == T, "WGD", "WT")
-large_genomic_events$shattered_regions_presence <- ifelse(large_genomic_events$shattered_regions_presence == "High-Confidence", "High confidence", 
-                                                          ifelse(large_genomic_events$shattered_regions_presence == "Low-Confidence", "Low confidence", "WT" ))
+large_genomic_events$shattered_region <- case_when(large_genomic_events$shattered_region == "HC"~"High confidence",
+                                                   large_genomic_events$shattered_region == "LC"~"Low confidence", 
+                                                   TRUE~"WT" )
 
 colnames(large_genomic_events)[2:3] <- c("WGD", "Shattered regions")
 dim(large_genomic_events)
@@ -460,6 +597,8 @@ table(oncoplot_temp2$Shatteredregions2)
 prop.table(table(oncoplot_temp2$Shatteredregions2))
 table(oncoplot_temp2$group, oncoplot_temp2$Shatteredregions2)
 fisher.test(table(oncoplot_temp2$Shatteredregions2, oncoplot_temp$group))
+fisher.test(table(oncoplot_temp2$Shatteredregions2, oncoplot_temp$group))
+fisher.test(table(oncoplot_temp2$Shatteredregions2, oncoplot_temp$group)[,-4])#not significant without sc-enriched
 
 genes_frequency <- genes_frequency[order(genes_frequency$length_unique, decreasing=TRUE),]
 gene_order <- as.character(genes_frequency$gene1_name)
@@ -573,7 +712,7 @@ colnames(table_s18) <- c("Gene Symbol", "Gene name" , "additional function",  "G
                         "n Ca B with SNV event"  ,  "n sc-enriched with SNV event" , "Fisher' exact test P value (distribution of SNV event among archetype", "q value")
 ```
 
-## Compute enrichment of in ERG genes with SNV
+## Compute enrichment in ERG genes with SNV
 55 Nb mutated genes in ERG genes
 ```{r}
 dim(chromatin_remodelling_gene_list) # 426
@@ -647,7 +786,10 @@ oncoplot <- arrange(oncoplot_temp, MEN1, ARID1A, EIF1AX, ATM, "HLA-C", "HLA-A", 
 rownames(oncoplot) <- NULL
 oncoplot$group <- factor(oncoplot$group , levels = c("Ca A1", "Ca A2", "Ca B", "sc-enriched"))
 oncoplot <- oncoplot[order(oncoplot$group),]
-sample_order <- oncoplot$sample_id # Set sample order
+
+sample_order <- left_join(oncoplot,var_cli[,c("sample_id","group","type")]) %>% arrange(group,MEN1,ARID1A,EIF1AX,ATM,`HLA-C`,`HLA-A`,ASXL1,BRAF,CLIP1,SGK1,
+                                                                                        `-1p13.3`,  `-3p`, `-3q`,  `+5q`,  `+5p`, `+7p` , `-11q13.1`, `+14p` ,WGD,`Shattered regions`,Epigenetic.regulatory.genes,type) %>% pull(sample_id)#oncoplot$sample_id # Set sample order
+#sample_order <- oncoplot$sample_id # Set sample order
 
 oncoplot <- oncoplot[,-ncol(oncoplot)] # remove archetype column 
 oncoplot <- oncoplot %>% gather(Feature, Value, c(2:ncol(oncoplot))) # Make wide dataframe long for plotting
@@ -701,27 +843,12 @@ p2 <- ggplot(clinplot, aes(sample_id, Feature, fill=Value)) +
 patchwork <- p2 /p1 + plot_layout(heights=c(0.3,1)) + plot_annotation(tag_levels = list(c('C'))) &  theme(plot.tag = element_text(size = 20)) 
 
 patchwork
-ggsave(patchwork,file="Oncoplot_drivers_extended_version_row_by_arch.pdf", h=9,w=8)
-ggsave(patchwork,file="Oncoplot_drivers_extended_version_row_by_arch.svg", h=9,w=8)
+ggsave(patchwork,file="EDFig2c_Oncoplot_drivers_extended_version_row_by_arch.pdf", h=9,w=8)
+ggsave(patchwork,file="EDFig2c_Oncoplot_drivers_extended_version_row_by_arch.svg", h=9,w=8)
 ```
 
 ## Figure 2C - Draw oncoplot simplified
 ```{r}
-oncoplot_temp$"+5" <- oncoplot_temp$"+5q"
-oncoplot_temp[oncoplot_temp$"+5p" == "CNV event",]$"+5"= "CNV event"
-
-oncoplot_temp$"-3" <- oncoplot_temp$"-3p"
-oncoplot_temp[oncoplot_temp$"-3q" == "CNV event",]$"-3"= "CNV event"
-
-oncoplot_temp <- oncoplot_temp %>% dplyr::select(-c("-3p", "-3q", "+5q", "+5p"))
-
-cols <- colnames(oncoplot_temp)
-third_from_end <- cols[length(cols) - 2]
-oncoplot_temp <- oncoplot_temp[, c(setdiff(cols, third_from_end), third_from_end)]
-
-colnames(oncoplot_temp)[which(colnames(oncoplot_temp) == "+7p")] = "+7"
-colnames(oncoplot_temp)[which(colnames(oncoplot_temp) == "+14p")] = "+14"
-
 oncoplot <- oncoplot_temp %>%
   dplyr::select(sample_id,MEN1, ARID1A, EIF1AX, ATM, `HLA-C`, `HLA-A`, ASXL1, BRAF, CLIP1, SGK1, 
          `-11q13.1`,
@@ -800,16 +927,17 @@ ggsave(Fig2b_right,file="Figure2B_Oncoplot_drivers_simplified_version_row_by_arc
 
 ## Extended Data Fig 2e: proportion of samples by group with a genomic event
 ```{r}
-oncoplot_temp$SNV_event_driver_gene <- ifelse(apply(oncoplot_temp[, 2:11], 1, function(x) any(x != "WT")), 1, 0 )
-oncoplot_temp$CNV_event <- ifelse(apply(oncoplot_temp[, c(12:15,19:20)], 1, function(x) any(x != "WT")), 1, 0 )
-oncoplot_temp$WGG_event <- ifelse(oncoplot_temp$WGD != "WT", 1, 0)
+oncoplot_temp$SNV_event_driver_gene <- ifelse(apply(oncoplot_temp[, 2:11], 1, function(x) any(x != "WT")), 1, 0 ) # OK
+oncoplot_temp$CNV_event <- ifelse(apply(oncoplot_temp[, c(12:19)], 1, function(x) any(x != "WT")), 1, 0 )
+oncoplot_temp$WGD_event <- ifelse(oncoplot_temp$WGD != "WT", 1, 0)
 oncoplot_temp$shattered_event <- ifelse(oncoplot_temp$`Shattered regions` != "WT", 1, 0)
+oncoplot_temp$Epigenetic_regulatory_gene_event <- ifelse(oncoplot_temp$Epigenetic.regulatory.genes != "WT", 1, 0)
 
-summary_event <- oncoplot_temp[,c(1,21:25)]
-summary_event$several_events <- ifelse(apply(summary_event[, 3:6], 1, function(x) sum(x) > 1), 1, 0 )
-summary_event$any_events <- ifelse(apply(summary_event[, 3:6], 1, function(x) sum(x) == 0), 1, 0 )
+summary_event <- oncoplot_temp[,c(1,23:28)]
+summary_event$several_events <- ifelse(apply(summary_event[, 3:7], 1, function(x) sum(x) > 1), 1, 0 )
+summary_event$any_events <- ifelse(apply(summary_event[, 3:7], 1, function(x) sum(x) == 0), 1, 0 )
 
-summary_event[summary_event$several_events == 1, 3:6] = 0
+summary_event[summary_event$several_events == 1, 3:7] = 0
 
 head(summary_event)
 
@@ -819,7 +947,8 @@ events_occ <- summary_event %>%
             SNV_event_driver_gene = sum(SNV_event_driver_gene ),
             CNV_event  = sum(CNV_event),
             shattered_event  = sum(shattered_event ),
-            WGG_event = sum(WGG_event ), 
+            WGD_event = sum(WGD_event ), 
+            Epigenetic_regulatory_gene_event = sum(Epigenetic_regulatory_gene_event),
             several_events  = sum(several_events ),
             any_events = sum(any_events))
 
@@ -828,68 +957,25 @@ events_occ[,3:ncol(events_occ)] <- (events_occ[,3:ncol(events_occ)]/events_occ$t
 events_occ_l  <- events_occ %>% dplyr::select(-total_cases) %>%
     pivot_longer(!group, names_to = "event", values_to = "percentage")
 
-events_occ_l$event <- factor(events_occ_l$event , levels = rev(c("any_events", "SNV_event_driver_gene" , "CNV_event",   "shattered_event" ,  "WGG_event" , "several_events" )))
+events_occ_l$event <- factor(events_occ_l$event , levels = rev(c("any_events", "SNV_event_driver_gene" , "CNV_event",   "shattered_event" ,  "WGD_event" , "Epigenetic_regulatory_gene_event", "several_events" )))
 
-palette_driver_event <- c("any_events" = "#7d7d7d", "SNV_event_driver_gene" = "#4EB265",   "CNV_event"= "#FF9F00",  "shattered_event" = "#81031D",     "several_events" = "#DC050C"  )
+palette_driver_event <- c("any_events" = "#7d7d7d", "SNV_event_driver_gene" = "#4EB265",   "CNV_event"= "#FF9F00",  
+                          "WGD_event" = "#C4DE54", "shattered_event" = "#81031D",  "Epigenetic_regulatory_gene_event" = "#4EC6D0",   "several_events" = "#DC050C" )
 
 
 plot_e <- ggplot( events_occ_l  , aes(x=group ,y=percentage,fill=event)) + 
   geom_bar(stat="identity") + theme_classic() + 
   theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,colour =arc4[(c("Ca A1","Ca A2","Ca B","sc-enriched"))] ),
         legend.title =  element_blank()) +
-  xlab("") + ylab("% of samples") + scale_fill_manual(values=palette_driver_event, labels = c("any_events" = "None", "SNV_event_driver_gene" = "SNV in driver gene",  "CNV_event" = "CNV", 
-                                                                                              "shattered_event" = "Shattered regions", 
-                                                                                             "several_events"= "Several events") )
+  xlab("") + ylab("% of samples") + scale_fill_manual(values=palette_driver_event, labels = c("any_events" = "None", "SNV_event_driver_gene" = "SNV driver",  "CNV_event" = "CNV driver", "WGD_event" = "WGD", "shattered_event" = "Shattered regions",  "several_events"= "Several events","Epigenetic_regulatory_gene_event"="ER gene variant") )
 
-ggsave(plot_e,filename="Barplot_percentages_of_sampels_with_imp_genomic_event_v1.pdf", h=3,w=5)
-ggsave(plot_e,filename="Barplot_percentages_of_sampels_with_imp_genomic_event_v1.svg", h=3,w=5)
+ggsave(plot_e,filename="EDFig2e_Barplot_percentages_of_sampels_with_imp_genomic_event.pdf", h=3,w=5)
+ggsave(plot_e,filename="EDFig2e_Barplot_percentages_of_sampels_with_imp_genomic_event.svg", h=3,w=5)
 
 plot_e
-
-## version 2
-oncoplot_temp$SNV_event_driver_gene <- ifelse(apply(oncoplot_temp[, 2:11], 1, function(x) any(x != "WT")), 1, 0 )
-oncoplot_temp$CNV_event <- ifelse(apply(oncoplot_temp[, c(12:15,19:20)], 1, function(x) any(x != "WT")), 1, 0 )
-oncoplot_temp$WGG_event <- ifelse(oncoplot_temp$WGD != "WT", 1, 0)
-oncoplot_temp$shattered_event <- ifelse(oncoplot_temp$`Shattered regions` != "WT", 1, 0)
-
-summary_event <- oncoplot_temp[,c(1,21:25)]
-summary_event$any_events <- ifelse(apply(summary_event[, 3:6], 1, function(x) sum(x) == 0), 1, 0 )
-
-
-head(summary_event)
-
-events_occ <- summary_event %>%
-  group_by(group) %>%
-  summarise(total_cases = n(),
-            SNV_event_driver_gene = sum(SNV_event_driver_gene ),
-            CNV_event  = sum(CNV_event),
-            shattered_event  = sum(shattered_event ),
-            WGG_event = sum(WGG_event ), 
-            any_events = sum(any_events))
-
-events_occ[,3:ncol(events_occ)] <- (events_occ[,3:ncol(events_occ)]/events_occ$total_cases) * 100
-
-
-events_occ_l  <- events_occ %>% dplyr::select(-total_cases) %>%
-  pivot_longer(!group, names_to = "event", values_to = "percentage")
-
-events_occ_l$event <- factor(events_occ_l$event , levels = c("any_events", "SNV_event_driver_gene" , "CNV_event",   "shattered_event" ,  "WGG_event"  ))
-
-palette_driver_event <- c("any_events" = "#7d7d7d", "SNV_event_driver_gene" = "#4EB265",   "CNV_event"= "#FF9F00",  "shattered_event" = "#81031D",   "WGG_event" ="#DC050C"  )
-
-
-plot_e <- ggplot( events_occ_l  , aes(x=group ,y=percentage,fill=event)) + 
-  geom_bar(stat="identity", position = "dodge") + theme_classic() + 
-  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,colour =arc4[(c("Ca A1","Ca A2","Ca B","sc-enriched"))] ),
-        legend.title =  element_blank()) +
-  xlab("") + ylab("% of samples") + scale_fill_manual(values=palette_driver_event, labels = c("any_events" = "Any", "SNV_event_driver_gene" = "SNV in driver gene",  "CNV_event" = "CNV", 
-                                                                                              "shattered_event" = "Shattered regions", 
-                                                                                              "WGG_event" ="WGD" , "several_events"= "Several event") )
-
-plot_e
-
-ggsave("Barplot_percentages_of_sampels_with_imp_genomic_event_v2.svg", plot_e,h=3,w=5)
-ggsave("Barplot_percentages_of_sampels_with_imp_genomic_event_v2.pdf", plot_e,h=3,w=5)
 ```
 
-
+# Session info
+```{r}
+sessionInfo()
+```

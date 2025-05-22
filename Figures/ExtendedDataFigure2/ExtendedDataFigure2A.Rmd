@@ -1,0 +1,884 @@
+---
+title: "EDFig2a and FigS9"
+author: "N. Alcala"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Extended data Figure 2A and Figure S9: mutational burdens comparisons
+
+This document produces Extended Data Figure 2A and Figure S9 from the lungNENomics manuscript, which displays the mutational burden of different types of variants compared across molecular groups and histological types and with that of the PCAWG cohort. It also produces the data presented in Table S20.
+
+# Load files
+## Load libraries
+
+```{r pressure, echo=FALSE}
+library(tidyverse)
+library(scales)
+library(readxl)
+library(patchwork)
+library(ggrepel)
+library(ggsignif)
+library(ggbeeswarm)
+```
+
+## Load color schemes
+```{r}
+arc4 <- c("Ca A1"="#999933", "Ca A2"="#DDCC77", "Ca B"="#117733", "sc-enriched"="#CC6677")
+pie(rep(1,4), col=arc4, labels=arc4)
+type5 <- c("Typical"="#9DB802","Atypical"="#025B0E","Carcinoid"="#CEDB80","LCNEC"="#824833","SCLC"="#000000")
+pie(rep(1, 5), col = type5, labels = type5)
+``` 
+
+## load data
+
+### LungNENomics 
+Metadata
+```{r}
+Attributes = read_tsv(unzip('../../Data/GabrielEtAl2020/Attributes.txt.zip')[1])
+
+load("/data/lungNENomics/work/Descriptive_manuscript_data/MOFA/MOFA.Exp.Meth.Alt.CNV_lungNENomicsCombined/ParetoTI/variables_archetypes_MOFA_LNET.RData") # data also contained in Table S1
+gigascience_attributes = read_tsv("/data/lungNENomics/work/SextonoatesA/Attributes.txt")
+var_LNET$sample_id = as.character(var_LNET$sample_id)
+var_LNET$group = var_LNET$archetype_k4_LF3_label
+
+var_cli = bind_rows(var_LNET, Attributes %>% filter(Histopathology_simplified%in%c("LCNEC","SCLC")) %>% 
+                      mutate(sample_id = Sample_ID, group=Histopathology_simplified) %>% dplyr::select(sample_id,group) )
+var_cli = bind_rows(var_cli,tibble(sample_id=c("LCNEC3T","LCNEC4T"),group="LCNEC") )
+```
+SNVS 
+```{r}
+#### lungNENomics
+snv.lungNENomics.SBS = read_tsv("/data/lungNENomics/work/alcalan/WGS/small_variants/somatic/release2_intersectmnps_15042023/mutational_signatures/input/output/SBS/input.SBS96.all")
+snv.lungNENomics.SBS = tibble(Sample_name = colnames(snv.lungNENomics.SBS)[-1], n.SBS = colSums(snv.lungNENomics.SBS[,-1] ) )
+snv.lungNENomics.ID  = read_tsv("/data/lungNENomics/work/alcalan/WGS/small_variants/somatic/release2_intersectmnps_15042023/mutational_signatures/input/output/ID/input.ID83.all")
+snv.lungNENomics.ID  = tibble(Sample_name = colnames(snv.lungNENomics.ID)[-1], n.ID = colSums(snv.lungNENomics.ID[,-1] ) )
+snv.lungNENomics = left_join(snv.lungNENomics.SBS,snv.lungNENomics.ID) %>% mutate(Sample_name = str_replace(str_remove(Sample_name,"_final"),"-","_") )
+```
+
+Check that all samples are there
+```{r}
+WGS_discov_samples = var_cli %>% filter(str_detect(omics_group,"WGS"),!is.na(group)) %>% pull(sample_id)
+all( WGS_discov_samples %in% snv.lungNENomics$Sample_name )
+```
+
+SVs
+```{r}
+#### lungNENomics
+svs.num.lungNENomics = read_tsv("/data/lungNENomics/work/alcalan/WGS/structural_variants/sv-somatic-cns-nf_lungNENomicsAndPublic_20092022_results/SVs_annotated_somatic_PONfiltered.tsv")
+svs.num.lungNENomics = svs.num.lungNENomics %>% mutate(Sample_name=str_remove(Sample_name,"_T$"),Sample_name=str_replace(Sample_name,"-","_"))
+svs.num.lungNENomics = svs.num.lungNENomics[!duplicated(svs.num.lungNENomics[,c("ID","Sample_name")]),] %>% filter(nb_germline_100bp==0) %>% group_by(Sample_name) %>% summarize(SVB.somatic=n())
+```
+
+Check that all samples are there
+```{r}
+WGS_discov_samples[ !WGS_discov_samples %in% svs.num.lungNENomics$Sample_name ] #5 samples with no data :  "S01529" "S01742"  
+svs.num.lungNENomics$Sample_name[ !svs.num.lungNENomics$Sample_name %in%WGS_discov_samples  ] # LCNEC samples, all good
+
+list.files("/data/lungNENomics/work/alcalan/WGS/structural_variants/sv-somatic-cns-nf_lungNENomicsAndPublic_20092022_results/DELLY/") # SV detection did run, they just did not detect any SVS => put 0
+
+vars.lungNENomics = left_join(snv.lungNENomics,svs.num.lungNENomics) #snv.lungNENomics %>% filter(Sample_name%in% var_cli$sample_id) %>% group_by(sample_id) %>% summarise(n.SNVs=n())
+vars.lungNENomics$SVB.somatic[vars.lungNENomics$Sample_name%in%c("S01529", "S01742"  )] = 0
+```
+
+CNVs
+```{r}
+lungNENomics.CNVs = read_tsv("/data/lungNENomics/work/alcalan/WGS/CNV/release1.1_PURPLE_19052023/lungNENomics.all.purple.cnv.somatic.19062023.tsv") %>% 
+  mutate(size=end-start+1 ,sample=str_remove(sample,"_T$"))
+lungNENomics.CNVs.general = read_tsv("/data/lungNENomics/work/alcalan/WGS/CNV/release1.1_PURPLE_19052023/purple_summary_all.txt")%>% 
+  mutate(sample=str_remove(tumor_id,"_T$"))
+
+Males_samp = lungNENomics.CNVs.general$sample[lungNENomics.CNVs.general$gender=="MALE"] 
+
+CNB_cnvsegs = lungNENomics.CNVs %>% #left_join(lungNENomics.CNVs.general %>% dplyr::select(sample,ploidy) %>% mutate(ploidy=round(ploidy)), lungNENomics.CNVs) %>%
+  filter(!is.na(copyNumber.corrected.integer),
+                                       ((!chromosome%in%c("chrX","chrY")|!sample%in%Males_samp) & 
+                                          (as.numeric(copyNumber.corrected.integer)>2) ) | 
+                                         (chromosome%in%c("chrX","chrY") & sample%in%Males_samp & as.numeric(copyNumber.corrected.integer)>1)) %>% 
+  group_by(sample) %>% summarize(size.amp = sum(end-start+1),CNB.amp=n())
+CNB_cnvsegs$prop.amp = NA
+CNB_cnvsegs$prop.amp[CNB_cnvsegs$sample%in%Males_samp] = CNB_cnvsegs$size.amp[CNB_cnvsegs$sample%in%Males_samp]/3088269832
+CNB_cnvsegs$prop.amp[!CNB_cnvsegs$sample%in%Males_samp] = CNB_cnvsegs$size.amp[!CNB_cnvsegs$sample%in%Males_samp]/3031042417
+
+CNB_cnvsegs.prop.del = lungNENomics.CNVs %>%  #left_join(lungNENomics.CNVs.general %>% dplyr::select(sample,ploidy) %>% mutate(ploidy=round(ploidy)), lungNENomics.CNVs) %>%
+  filter(!is.na(copyNumber.corrected.integer),
+                                                ((!chromosome%in%c("chrX","chrY")|!sample%in%Males_samp) & 
+                                                   (as.numeric(copyNumber.corrected.integer)<2) ) | 
+                                                  (chromosome%in%c("chrX","chrY") & sample%in%Males_samp & as.numeric(copyNumber.corrected.integer)<1)) %>% 
+  group_by(sample) %>% summarize(size.del = sum(end-start+1),CNB.del = n())
+
+CNB_cnvsegs.prop.del$prop.del = NA
+CNB_cnvsegs.prop.del$prop.del[CNB_cnvsegs.prop.del$sample%in%Males_samp]  = CNB_cnvsegs.prop.del$size.del[CNB_cnvsegs.prop.del$sample%in%Males_samp]/3088269832
+CNB_cnvsegs.prop.del$prop.del[!CNB_cnvsegs.prop.del$sample%in%Males_samp] = CNB_cnvsegs.prop.del$size.del[!CNB_cnvsegs.prop.del$sample%in%Males_samp]/3031042417
+CNB_cnvsegs.prop.del$sample = str_remove(CNB_cnvsegs.prop.del$sample,"_T$")
+```
+
+Check that all samples are there
+```{r}
+samples_nodel = WGS_discov_samples[ !WGS_discov_samples %in% CNB_cnvsegs.prop.del$sample ] #30 samples with no deletion data
+samples_noamp = WGS_discov_samples[ !WGS_discov_samples %in% CNB_cnvsegs$sample ] #39 samples with no data
+samples_nodelornoamp_th = lungNENomics.CNVs %>% filter(!chromosome%in%c("chrX","chrY")) %>% mutate(del=copyNumber.corrected.integer<1.9,amp=copyNumber.corrected.integer>2.1) %>% group_by(sample) %>% summarize(del=sum(del),amp=sum(amp)) %>% filter(del==0 | amp==0) 
+
+samples_nodel[!samples_nodel %in% samples_nodelornoamp_th$sample[samples_nodelornoamp_th$del==0]] #no samples without del data that should have some
+samples_noamp[!samples_noamp %in% samples_nodelornoamp_th$sample[samples_nodelornoamp_th$amp==0]] #no samples without amp data that should have some
+
+# merge tables
+CNB_cnvsegs2 = full_join(CNB_cnvsegs.prop.del,CNB_cnvsegs,by=c(sample="sample") )
+
+vars.lungNENomics = left_join(vars.lungNENomics,CNB_cnvsegs2,by=c(Sample_name="sample"))
+vars.lungNENomics$prop.amp[is.na(vars.lungNENomics$prop.amp)] = 0 # NAs are actually 0s
+vars.lungNENomics$prop.del[is.na(vars.lungNENomics$prop.del)] = 0 # NAs are actually 0s
+vars.lungNENomics$size.del[is.na(vars.lungNENomics$size.del)] = 0 # NAs are actually 0s
+vars.lungNENomics$size.amp[is.na(vars.lungNENomics$size.amp)] = 0 # NAs are actually 0s
+vars.lungNENomics$CNB.del[is.na(vars.lungNENomics$CNB.del)] = 0 # NAs are actually 0s
+vars.lungNENomics$CNB.amp[is.na(vars.lungNENomics$CNB.amp)] = 0 # NAs are actually 0s
+
+vars.lungNENomics = vars.lungNENomics %>% mutate(WGD = vars.lungNENomics$Sample_name %in% str_replace(lungNENomics.CNVs.general$tumor_id[lungNENomics.CNVs.general$wholeGenomeDuplication],"-","_") )
+vars.lungNENomics$Sample_name[vars.lungNENomics$WGD]
+
+vars.lungNENomics = left_join(vars.lungNENomics,var_cli %>% dplyr::select(sample_id,type,group), by=c("Sample_name"="sample_id"))  %>% 
+  mutate(group=factor(group,levels=c("Ca A1","Ca A2","Ca B","sc-enriched","LCNEC")))%>% filter(!is.na(group))
+
+vars.lungNENomics$type[vars.lungNENomics$group=="LCNEC"] = "LCNEC"
+vars.lungNENomics = vars.lungNENomics %>% mutate(type =factor(type,levels = c("Typical","Carcinoid","Atypical","LCNEC")) )
+```
+Final checks
+```{r}
+all( WGS_discov_samples %in% vars.lungNENomics$Sample_name ) # all discovery samples with WGS are here
+sum(is.na(vars.lungNENomics %>% filter(!is.na(vars.lungNENomics$group)) ))# all data is here
+```
+
+We compute median across groups for the different variables
+```{r}
+vars.med.per.Type = vars.lungNENomics %>% group_by(type) %>% summarize(med.n.SNVs=median(n.SBS),med.n.ID=median(n.ID),
+                                                                            med.n.SVs =median(SVB.somatic),
+                                                                            med.amp = median(prop.amp,na.rm=T),
+                                                                                        n.samp.amp=sum(prop.amp!=0),
+                                                                                        med.CNB.amp = median(CNB.amp),
+                                                                                        med.del = median(prop.del,na.rm=T),
+                                                                                        n.samp.del=sum(!is.na(prop.del)),
+                                                                                        med.CNB.del = median(CNB.del))
+
+vars.med.per.group = vars.lungNENomics %>% group_by(group) %>% summarize(med.n.SNVs=median(n.SBS),med.n.ID=median(n.ID),
+                                                                            med.n.SVs =median(SVB.somatic),
+                                                                            med.amp = median(prop.amp,na.rm=T),
+                                                                                        n.samp.amp=sum(prop.amp!=0),
+                                                                                        med.CNB.amp = median(CNB.amp),
+                                                                                        med.del = median(prop.del,na.rm=T),
+                                                                                        n.samp.del=sum(!is.na(prop.del)),
+                                                                                        med.CNB.del = median(CNB.del))
+
+# global
+vars.lungNENomics %>% summarize(med.n.SNVs=median(n.SBS),med.n.ID=median(n.ID),
+                                                                            med.n.SVs =median(SVB.somatic),
+                                                                            med.amp = median(prop.amp,na.rm=T),
+                                                                                        n.samp.amp=sum(prop.amp!=0),
+                                                                                        med.CNB.amp = median(CNB.amp),
+                                                                                        med.del = median(prop.del,na.rm=T),
+                                                                                        n.samp.del=sum(!is.na(prop.del)),
+                                                                                        med.CNB.del = median(CNB.del))
+```
+
+### PCAWG data
+PCAWG data can be dowloaded following the instructions at https://docs.icgc-argo.org/docs/data-access/icgc-25k-data#open-release-data---object-bucket-details , e.g. to retrieve CNVs use the command line "aws s3 cp s3://icgc25k-open/PCAWG/consensus_cnv/consensus.20170119.somatic.cna.annotated.tar.gz --endpoint-url https://object.genomeinformatics.org/ --no-sign-request ."
+
+Sample info
+```{r}
+pcawg_samples = read_tsv("/data/lungNENomics/work/alcalan/Data/pcawg_sample_sheet.v1.4.2016-09-14.tsv")
+pcawg_specimen = read_xlsx("/data/lungNENomics/work/alcalan/Data/pcawg_specimen_histology_August2016_v9.xlsx")
+
+pcawg_info = left_join(pcawg_samples,pcawg_specimen) %>% filter(library_strategy=="WGS")
+
+### find types with >=30 samples
+types.tokeep = names(which(table(pcawg_info$histology_abbreviation[pcawg_info$donor_wgs_exclusion_white_gray!="Excluded"])>=30)) 
+```
+
+SNVs
+```{r}
+pcawg_sigs=read.table("/data/lungNENomics/work/alcalan/Data/PCAWG_sigProfiler_SBS_signatures_in_samples (2).csv",h=T,sep=",")
+pcawg_sigs$nmuts = rowSums(pcawg_sigs[,-(1:3)])
+pcawg_sigs2 = left_join(pcawg_sigs,pcawg_info,by=c("Sample.Names"="icgc_specimen_id")) %>% filter(donor_wgs_exclusion_white_gray!="Excluded")
+snvs.num.med.per.Type.sigs = pcawg_sigs2 %>% group_by(histology_abbreviation) %>% summarize(med.n.SNVs = median(nmuts,na.rm=T))
+```
+
+CNVs
+```{r}
+cnv.files = list.files("/data/lungNENomics/work/alcalan/Data/consensus.20170119.somatic.cna.annotated/",pattern = "txt$",full.names = T)
+cnv.names = str_remove(list.files("/data/lungNENomics/work/alcalan/Data/consensus.20170119.somatic.cna.annotated/",pattern = "txt$",full.names = F),".consensus.20170119.somatic.cna.annotated.txt")
+
+cnvs = lapply(cnv.files , function(x) read_tsv(x) )
+
+cnvs.male = sapply(cnvs , function(x){any(x$chromosome=="Y")} )
+cnvs.amp  = sapply(1:length(cnvs) , function(i){xtmp = cnvs[[i]] %>% 
+  filter( (cnvs.male[i] & chromosome%in%c("X","Y") & total_cn>1) | (((!cnvs.male[i]) | !(chromosome%in%c("X","Y")) ) & (total_cn>2)) );return(sum(xtmp$end-xtmp$start,na.rm=T))} )
+cnvs.del  = sapply(1:length(cnvs) , function(i){xtmp = cnvs[[i]] %>% 
+  filter( (((!cnvs.male[i]) | !(chromosome%in%c("X","Y")) ) &  (total_cn<2)) |  (cnvs.male[i] & chromosome%in%c("X","Y") & total_cn<1) );return(sum(xtmp$end-xtmp$start,na.rm=T))} )
+
+cnvs.num = tibble(ID=cnv.names, prop.amp = cnvs.amp/c(3088269832,3031042417 )[2-cnvs.male],
+                  prop.del = cnvs.del/c(3088269832,3031042417 )[2-cnvs.male] )
+cnvs.num = left_join(cnvs.num,pcawg_info,by=c("ID"="aliquot_id")) %>% filter(donor_wgs_exclusion_white_gray!="Excluded")
+
+cnvs.num.med.per.Type = cnvs.num %>% group_by(histology_abbreviation) %>% summarize(med.amp = median(prop.amp,na.rm=T),med.del = median(prop.del,na.rm=T))
+```
+
+SVs
+```{r}
+sv.tcga.files = list.files("/data/lungNENomics/work/alcalan/Data/final_consensus_sv_bedpe_passonly.tcga.public/tcga/open/",pattern = "gz$",full.names = T)
+sv.tcga.names = str_remove(list.files("/data/lungNENomics/work/alcalan/Data/final_consensus_sv_bedpe_passonly.tcga.public/tcga/open/",pattern = "gz$",full.names = F),".pcawg_consensus_1.6.161116.somatic.sv.bedpe.gz")
+sv.icgc.files = list.files("/data/lungNENomics/work/alcalan/Data/final_consensus_sv_bedpe_passonly.icgc.public/icgc/open/",pattern = "gz$",full.names = T)
+sv.icgc.names = str_remove(list.files("/data/lungNENomics/work/alcalan/Data/final_consensus_sv_bedpe_passonly.icgc.public/icgc/open/",pattern = "gz$",full.names = F),".pcawg_consensus_1.6.161116.somatic.sv.bedpe.gz")
+
+svs = lapply(c(sv.tcga.files,sv.icgc.files) , function(x) read_tsv(gzfile(x)) )
+
+# check if unique
+table( sapply(1:length(svs), function(i) any(duplicated(svs[[i]]$sv_id)) ) ) #all unique ids
+table( sapply(1:length(svs), function(i) any(duplicated(svs[[i]][,c(1:6,9:11)])) ) ) #barely any duplications
+
+svs.num = tibble(ID=c(sv.tcga.names,sv.icgc.names), n.SVs = sapply(svs,nrow) )
+svs.num = left_join(svs.num,pcawg_info,by=c("ID"="aliquot_id")) %>% filter(donor_wgs_exclusion_white_gray!="Excluded")
+
+## lost some samples because other histology...
+table(pcawg_info$histology_abbreviation) # 35 Biliary-AdenoCA
+
+lostBACA = pcawg_info[which(pcawg_info$histology_abbreviation=="Biliary-AdenoCA"),][sapply(pcawg_info$aliquot_id[which(pcawg_info$histology_abbreviation=="Biliary-AdenoCA")], function(x) !x %in% svs.num$ID[svs.num$histology_abbreviation=="Biliary-AdenoCA"] ),] %>% 
+  dplyr::select(donor_wgs_exclusion_white_gray,aliquot_id,library_strategy,project_code,histology_abbreviation,specimen_donor_treatment_type, donor_wgs_included_excluded, specimen_library_strategy)
+
+lostBACA$aliquot_id %in% c(sv.tcga.names,sv.icgc.names) # not in files
+
+svs.num.med.per.Type = svs.num %>% group_by(histology_abbreviation) %>% summarize(med.n.SVs = median(n.SVs,na.rm=T))
+``` 
+
+## Comparisons and plots
+
+Small variants TMB comparisons. We use 2 sample t-tests for all pairwise comparisons, and linear models for models adjusted for both molecular group and type
+```{r}
+vars.lungNENomics = vars.lungNENomics %>% mutate(log.n.SBSID =  log10(n.SBS+n.ID+1))
+vars.lungNENomics$group = factor(vars.lungNENomics$group,levels=names(arc4))
+
+library(broom)
+
+Test_table_smallvars = c()
+for(i in 1:3){
+  for(j in (i+1):4){
+    Test_table_smallvars = rbind(Test_table_smallvars,
+                                 cbind(Variable="SmallVariants",Level1 = names(arc4)[i] , Level2 = names(arc4)[j], 
+                                       t.test(log(n.SBS+n.ID+1,10)~group, data=vars.lungNENomics,subset = group %in% names(arc4)[c(i,j)] ) %>% tidy()) )
+  }
+}
+for(i in 1:2){
+  for(j in (i+1):3){
+    Test_table_smallvars = rbind(Test_table_smallvars,
+                                 cbind(Variable="SmallVariants",Level1 = names(type5)[i] , Level2 = names(type5)[j], 
+                                       t.test(log(n.SBS+n.ID+1,10)~type, data=vars.lungNENomics,subset = type %in% names(type5)[c(i,j)] ) %>% tidy()) )
+  }
+}
+
+lm_smallvarA1Ty = lm(log(n.SBS+n.ID+1,10)~group/type, data=vars.lungNENomics%>% filter(group!="LCNEC")  )
+vars.lungNENomics$group = relevel(vars.lungNENomics$group,ref="Ca A2")
+lm_smallvarA2Ty = lm(log(n.SBS+n.ID+1,10)~group/type, data=vars.lungNENomics%>% filter(group!="LCNEC")  )
+vars.lungNENomics$group = relevel(vars.lungNENomics$group,ref="Ca B")
+lm_smallvarBTy = lm(log(n.SBS+n.ID+1,10)~group/type, data=vars.lungNENomics%>% filter(group!="LCNEC")  )
+
+Test_table_smallvars = bind_rows(Test_table_smallvars,
+                                 lm_smallvarA1Ty %>% tidy() %>% bind_cols(Variable="SmallVariants",Level1="Ca A1/type",alternative="two.sided",method="Linear regression t-test") %>% rename(Level2=term),
+                                 (lm_smallvarA2Ty %>% tidy() %>% bind_cols(Variable="SmallVariants",Level1="Ca A2/type",alternative="two.sided",method="Linear regression t-test") %>% rename(Level2=term))[c(1,3,4),],
+                                 (lm_smallvarBTy %>% tidy() %>% bind_cols(Variable="SmallVariants",Level1="Ca B/type",alternative="two.sided",method="Linear regression t-test") %>% rename(Level2=term))[c(1,4),] )
+
+Test_table_smallvars = as_tibble(Test_table_smallvars ) %>% mutate(Significance = case_when(as.numeric(p.value)<=0.001~"***",
+                                                                as.numeric(p.value)<=0.01~"**",
+                                                                as.numeric(p.value)<=0.05~"*",
+                                                                as.numeric(p.value)<=0.1~"." ) )
+
+```
+
+Plots. Note that we do not represent significance levels for models adjusted for both group and type because we adjust a linear model which does not perform all pairwise comparisons
+```{r}
+vars.lungNENomics$group = factor(vars.lungNENomics$group,levels=names(arc4))
+gg_TMB_smallvariants = ggplot( vars.lungNENomics %>% filter(group!="LCNEC")  , aes(x=group,y=n.SBS+n.ID,fill=group)) + 
+  geom_violin(scale="width",color=NA) + geom_boxplot(width=0.1,fill="white") +
+  geom_quasirandom(data = vars.lungNENomics %>% filter(group %in% c("sc-enriched")),col="white",shape=21) + 
+  scale_y_log10() + scale_fill_manual(values=c(arc4,type5) ) +
+  theme_classic() + xlab("Molecular group") + ylab("TMB (# small variants)") + 
+  geom_signif(comparisons = list(c("Ca A1", "Ca A2")), map_signif_level=TRUE,y_position = 4.3,test = "t.test",mapping = aes(y=log.n.SBSID))+
+  geom_signif(comparisons = list(c("Ca A1", "Ca B")), map_signif_level=TRUE,y_position = 4.4,test = "t.test",mapping = aes(y=log.n.SBSID))+
+  geom_signif(comparisons = list(c("Ca A1", "sc-enriched")), map_signif_level=TRUE,y_position = 4.5,test = "t.test",mapping = aes(y=log.n.SBSID))+
+  geom_signif(comparisons = list(c("Ca A2", "Ca B")), map_signif_level=TRUE,y_position = 4.3,test = "t.test",mapping = aes(y=log.n.SBSID))+
+  geom_signif(comparisons = list(c("Ca A2", "sc-enriched")), map_signif_level=TRUE,y_position = 4.6,test = "t.test",mapping = aes(y=log.n.SBSID))+
+  geom_signif(comparisons = list(c("Ca B", "sc-enriched")), map_signif_level=TRUE,y_position = 4.3,test = "t.test",mapping = aes(y=log.n.SBSID))+
+  guides(fill="none")
+
+gg_TMB_smallvariants.types = ggplot( vars.lungNENomics %>% filter(group!="LCNEC")  ,aes(x=type,y=n.SBS+n.ID,fill=type)) + 
+  geom_violin(scale="width",color=NA) + geom_boxplot(width=0.1,fill="white",position = position_dodge(preserve = "single")) +
+  scale_y_log10() + scale_fill_manual(values=c(arc4,type5) ) +
+  theme_classic() + xlab("Histopathological type") + ylab("TMB (# small variants)") + 
+  geom_signif(comparisons = list(c("Typical", "Atypical")), map_signif_level=TRUE,y_position = 4.6,test = "t.test",mapping = aes(y=log.n.SBSID))+
+  geom_signif(comparisons = list(c("Typical", "Carcinoid")), map_signif_level=TRUE,y_position = 4.3,test = "t.test",mapping = aes(y=log.n.SBSID))+
+  geom_signif(comparisons = list(c("Carcinoid", "Atypical")), map_signif_level=TRUE,y_position = 4.3,test = "t.test",mapping = aes(y=log.n.SBSID))+
+  guides(fill="none")
+
+gg_TMB_smallvariants.grtypes = ggplot( vars.lungNENomics %>% filter(group!="LCNEC")  , aes(x=group,y=n.SBS+n.ID,fill=type)) + 
+  geom_violin(scale="width",color=NA) + geom_boxplot(position = position_dodge(preserve = "single",width = 0.9))+#width=0.1) + #,fill="white"
+  geom_quasirandom(data = vars.lungNENomics %>% filter(group %in% c("sc-enriched")),col="white",shape=21) + 
+  scale_y_log10(lim=c(489,10**4.8)) + scale_fill_manual(values=c(arc4,type5) ) +
+  theme_classic() + xlab("Molecular group") + ylab("TMB (# small variants)") + 
+  guides(fill="none")
+
+gg_TMB_smallvariants+gg_TMB_smallvariants.types+gg_TMB_smallvariants.grtypes
+```
+
+SVB comparisons
+```{r}
+Test_table_SVs = c()
+for(i in 1:3){
+  for(j in (i+1):4){
+    Test_table_SVs = rbind(Test_table_SVs,
+                                 cbind(Variable="SVs",Level1 = names(arc4)[i] , Level2 = names(arc4)[j], 
+                                       t.test(log(SVB.somatic+1,10)~group, data=vars.lungNENomics,subset = group %in% names(arc4)[c(i,j)] ) %>% tidy()) )
+  }
+}
+for(i in 1:2){
+  for(j in (i+1):3){
+    Test_table_SVs = rbind(Test_table_SVs,
+                                 cbind(Variable="SVs",Level1 = names(type5)[i] , Level2 = names(type5)[j], 
+                                       t.test(log(SVB.somatic+1,10)~type, data=vars.lungNENomics,subset = type %in% names(type5)[c(i,j)] ) %>% tidy()) )
+  }
+}
+
+vars.lungNENomics$group = relevel(vars.lungNENomics$group,ref="Ca A1")
+lm_SVA1Ty = lm(log(SVB.somatic+1,10)~group/type, data=vars.lungNENomics%>% filter(group!="LCNEC")  )
+vars.lungNENomics$group = relevel(vars.lungNENomics$group,ref="Ca A2")
+lm_SVA2Ty = lm(log(SVB.somatic+1,10)~group/type, data=vars.lungNENomics%>% filter(group!="LCNEC")  )
+vars.lungNENomics$group = relevel(vars.lungNENomics$group,ref="Ca B")
+lm_SVBTy = lm(log(SVB.somatic+1,10)~group/type, data=vars.lungNENomics%>% filter(group!="LCNEC")  )
+
+Test_table_SVs = bind_rows(Test_table_SVs,
+                           lm_SVA1Ty %>% tidy() %>% bind_cols(Variable="SVs",Level1="Ca A1/type",alternative="two.sided",method="Linear regression t-test") %>% rename(Level2=term),
+                           (lm_SVA2Ty %>% tidy() %>% bind_cols(Variable="SVs",Level1="Ca A2/type",alternative="two.sided",method="Linear regression t-test") %>% rename(Level2=term))[c(1,3,4),],
+                           (lm_SVBTy %>% tidy() %>% bind_cols(Variable="SVs",Level1="Ca B/type",alternative="two.sided",method="Linear regression t-test") %>% rename(Level2=term))[c(1,4),] )
+
+
+Test_table_SVs = as_tibble(Test_table_SVs ) %>% mutate(Significance = case_when(as.numeric(p.value)<=0.001~"***",
+                                                                as.numeric(p.value)<=0.01~"**",
+                                                                as.numeric(p.value)<=0.05~"*",
+                                                                as.numeric(p.value)<=0.1~"." ) )
+
+
+vars.lungNENomics2 = vars.lungNENomics
+vars.lungNENomics2$SVB.somatic = log10(vars.lungNENomics2$SVB.somatic+1)
+```
+
+```{r}
+vars.lungNENomics2$group = factor(vars.lungNENomics2$group,levels=names(arc4))
+
+gg_SVB = ggplot(  vars.lungNENomics2 %>% filter(group!="LCNEC")  , aes(x=group,y=(SVB.somatic),fill=group)) + 
+  geom_violin(scale="width",col=NA) + geom_boxplot(width=0.1,fill="white") +
+  geom_quasirandom(data = vars.lungNENomics2 %>% filter(group %in% c("sc-enriched")),col="white",shape=21) + 
+  theme_classic() + scale_fill_manual(values=c(arc4,type5) ) + 
+  coord_cartesian(ylim=c(0,3)) +  scale_y_continuous(breaks=c(0,1,2,3),labels = c(1,10,100,1000))+#scale_y_log10(lim=c(1,500)) + 
+  xlab("Molecular group") + ylab("SVB (# SVs)") + 
+  geom_signif(comparisons = list(c("Ca A1", "Ca A2")), map_signif_level=TRUE,y_position = 2.7,test = "t.test")+#,mapping = aes(y=log10(SVB.somatic )))+
+  geom_signif(comparisons = list(c("Ca A1", "Ca B")), map_signif_level=TRUE,y_position = 2.8,test = "t.test")+#,mapping = aes(y=log10(SVB.somatic)))+
+  geom_signif(comparisons = list(c("Ca A1", "sc-enriched")), map_signif_level=TRUE,y_position = 2.9,test = "t.test")+#,mapping = aes(y=log10(SVB.somatic )))+
+  geom_signif(comparisons = list(c("Ca A2", "Ca B")), map_signif_level=TRUE,y_position = 2.7,test = "t.test")+#,mapping = aes(y=log10(SVB.somatic )))+
+  geom_signif(comparisons = list(c("Ca A2", "sc-enriched")), map_signif_level=TRUE,y_position = 3.0,test = "t.test")+#,mapping = aes(y=log10(SVB.somatic)))+
+  geom_signif(comparisons = list(c("Ca B", "sc-enriched")), map_signif_level=TRUE,y_position = 2.7,test = "t.test")+#,mapping = aes(y=log10(SVB.somatic)))+
+  guides(fill="none")
+
+gg_SVB.types = ggplot( vars.lungNENomics2 %>% filter(group!="LCNEC") , aes(x=type,y=SVB.somatic,fill=type)) + 
+   geom_violin(scale="width",color=NA) + geom_boxplot(width=0.1,fill="white") + 
+  coord_cartesian(ylim=c(0,3)) +  scale_y_continuous(breaks=c(0,1,2,3),labels = c(1,10,100,1000))+#scale_y_log10(lim=c(1,500)) + 
+  scale_fill_manual(values=type5) +
+  theme_classic() + xlab("Histopathological type") + ylab("SVB (# SVs)") + 
+  geom_signif(comparisons = list(c("Typical", "Atypical")), map_signif_level=TRUE,y_position = 2.9,test = "t.test")+
+  geom_signif(comparisons = list(c("Typical", "Carcinoid")), map_signif_level=TRUE,y_position = 2.7,test = "t.test")+
+  geom_signif(comparisons = list(c("Atypical", "Carcinoid")), map_signif_level=TRUE,y_position = 2.7,test = "t.test")+
+  guides(fill="none")
+
+gg_SVB.grtypes = ggplot( vars.lungNENomics2 %>% filter(group!="LCNEC")  , aes(x=group,y=SVB.somatic,fill=type)) + 
+  geom_violin(scale="width",color=NA) + geom_boxplot(position = position_dodge(preserve = "single",width = 0.9))+#width=0.1) + #,fill="white"
+  geom_quasirandom(data = vars.lungNENomics2 %>% filter(group %in% c("sc-enriched")),col="white",shape=21) + 
+  coord_cartesian(ylim=c(0,3)) +  scale_y_continuous(breaks=c(0,1,2,3),labels = c(1,10,100,1000))+
+  scale_fill_manual(values=c(arc4,type5) ) +
+  theme_classic() + xlab("Molecular group") + ylab("SVB (# SVs)") + 
+  guides(fill="none")
+
+gg_SVB+gg_SVB.types+gg_SVB.grtypes
+```
+
+CNB comparisons. Because proportions are constrained within the unit interval and because their distributions are very skewed, we use permutations tests instead of linear models and t-tests
+```{r}
+library(lmPerm)
+# groups only
+set.seed(0)
+
+Test_table_CNVs = c()
+for(i in 1:3){
+  for(j in (i+1):4){
+    Test_table_CNVs = rbind(Test_table_CNVs,
+                                 bind_cols(Variable="Amplifications_proportion",Level1 = names(arc4)[i] , Level2 = names(arc4)[j], 
+                                       summary(lmp(prop.amp~group, data=vars.lungNENomics %>% filter(!WGD),subset = group %in% names(arc4)[c(i,j)],
+                                                maxIter=10**6 ,Iter=10**6,Ca=0.01,contrasts = list(group="contr.treatment") ))$coef%>% as_tibble() )[-1,],
+                            bind_cols(Variable="Deletions_proportion",Level1 = names(arc4)[i] , Level2 = names(arc4)[j], 
+                                       summary(lmp(prop.del~group, data=vars.lungNENomics %>% filter(!WGD),subset = group %in% names(arc4)[c(i,j)],
+                                                maxIter=10**6 ,Iter=10**6,Ca=0.01,contrasts = list(group="contr.treatment") ))$coef%>% as_tibble() )[-1,]
+                            )
+  }
+}
+Test_table_CNVs %>% filter(`Pr(Prob)`<=0.05)
+for(i in 1:2){
+  for(j in (i+1):3){
+    Test_table_CNVs = rbind(Test_table_CNVs,
+                                 bind_cols(Variable="Amplifications_proportion",Level1 = names(type5)[i] , Level2 = names(type5)[j], 
+                                       summary(lmp(prop.amp~type, data=vars.lungNENomics %>% filter(!WGD),subset = type %in% names(type5)[c(i,j)],
+                                                maxIter=10**8 ,Iter=10**8,Ca=0.001,contrasts = list(type="contr.treatment") ))$coef%>% as_tibble() )[-1,],
+                            bind_cols(Variable="Deletions_proportion",Level1 = names(type5)[i] , Level2 = names(type5)[j], 
+                                       summary(lmp(prop.del~type, data=vars.lungNENomics %>% filter(!WGD),subset = type %in% names(type5)[c(i,j)],
+                                                maxIter=10**8 ,Iter=10**8,Ca=0.001,contrasts = list(type="contr.treatment") ))$coef%>% as_tibble() )[-1,]
+                            )
+   }
+}
+
+vars.lungNENomics$group = relevel(vars.lungNENomics$group,ref="Ca A1")
+lm_amp_A1Ty = lmp(prop.amp~group/type, data=vars.lungNENomics%>% filter(group!="LCNEC",!WGD), maxIter=10**8 ,Iter=10**8,Ca=0.001,contrasts = list(type="contr.treatment") )
+lm_del_A1Ty = lmp(prop.del~group/type, data=vars.lungNENomics%>% filter(group!="LCNEC",!WGD), maxIter=10**8 ,Iter=10**8,Ca=0.001,contrasts = list(type="contr.treatment") )
+vars.lungNENomics$group = relevel(vars.lungNENomics$group,ref="Ca A2")
+lm_del_A2Ty = lmp(prop.del~group/type, data=vars.lungNENomics%>% filter(group!="LCNEC",!WGD), maxIter=10**8 ,Iter=10**8,Ca=0.001,contrasts = list(type="contr.treatment") )
+lm_amp_A2Ty = lmp(prop.amp~group/type, data=vars.lungNENomics%>% filter(group!="LCNEC",!WGD), maxIter=10**8 ,Iter=10**8,Ca=0.001,contrasts = list(type="contr.treatment") )
+vars.lungNENomics$group = relevel(vars.lungNENomics$group,ref="Ca B")
+lm_amp_BTy  = lmp(prop.amp~group/type, data=vars.lungNENomics%>% filter(group!="LCNEC",!WGD), maxIter=10**8 ,Iter=10**8,Ca=0.001,contrasts = list(type="contr.treatment") ) 
+lm_del_BTy  = lmp(prop.del~group/type, data=vars.lungNENomics%>% filter(group!="LCNEC",!WGD), maxIter=10**8 ,Iter=10**8,Ca=0.001,contrasts = list(type="contr.treatment") )
+
+Test_table_CNVs = bind_rows(Test_table_CNVs, 
+                            (summary(lm_amp_A1Ty)$coef %>% as_tibble() %>% bind_cols(Variable="Amplifications_proportion",Level1="Ca A1/type",Level2=rownames(summary(lm_amp_A1Ty)$coef))),
+                            (summary(lm_amp_A2Ty)$coef %>% as_tibble() %>% bind_cols(Variable="Amplifications_proportion",Level1="Ca A2/type",Level2=rownames(summary(lm_amp_A2Ty)$coef)))[c(1,3,4),] ,
+                            (summary(lm_amp_BTy)$coef %>% as_tibble() %>% bind_cols(Variable="Amplifications_proportion",Level1="Ca B/type",Level2=rownames(summary(lm_amp_BTy)$coef)))[c(1,4),] ,
+                            (summary(lm_del_A1Ty)$coef %>% as_tibble() %>% bind_cols(Variable="Deletions_proportion",Level1="Ca A1/type",Level2=rownames(summary(lm_del_A1Ty)$coef)) ),
+                            (summary(lm_del_A2Ty)$coef %>% as_tibble() %>% bind_cols(Variable="Deletions_proportion",Level1="Ca A2/type",Level2=rownames(summary(lm_del_A2Ty)$coef)) )[c(1:4),],
+                            (summary(lm_del_BTy)$coef %>% as_tibble() %>% bind_cols(Variable="Deletions_proportion",Level1="Ca B/type",Level2=rownames(summary(lm_del_BTy)$coef)) )[c(1,4),])
+
+Test_table_CNVs = as_tibble(Test_table_CNVs ) %>% mutate(Significance = case_when(as.numeric(`Pr(Prob)`)<=0.001~"***",
+                                                                as.numeric(`Pr(Prob)`)<=0.01~"**",
+                                                                as.numeric(`Pr(Prob)`)<=0.05~"*",
+                                                                as.numeric(`Pr(Prob)`)<=0.1~"." ) )
+
+Test_table_CNVs$Level2 = str_remove_all(Test_table_CNVs$Level2,"group|type")
+Test_table_CNVs$Level1 = factor(Test_table_CNVs$Level1,levels=c("Ca A1","Ca A2","Ca B","sc-enriched","Typical","Carcinoid","Atypical",
+                                                                      "Ca A1/type","Ca A2/type","Ca B/type"))
+Test_table_CNVs$Level2 = factor(Test_table_CNVs$Level2,levels=c("(Intercept)","Ca A1","Ca A2","Ca B","sc-enriched","Typical","Carcinoid","Atypical",
+                                                                "Ca A1:Carcinoid","Ca A2:Carcinoid","Ca B:Carcinoid","sc-enriched:Carcinoid",
+                                                                "Ca A1:Atypical","Ca A2:Atypical","Ca B:Atypical","sc-enriched:Atypical"))
+
+Test_table_CNVs %>% filter(`Pr(Prob)`<=0.05)
+```
+
+Plots. We use the values in the tables for consistency
+```{r}
+vars.lungNENomics$group = factor(vars.lungNENomics$group,levels=names(arc4))
+
+segmenttib = tibble(x=c(1,2,3,1,1,2),xend=c(2,3,4,3,4,4),y=c(0.42,0.42,0.42,0.47,0.52,0.57))
+Test_table_CNVs_tmp = Test_table_CNVs %>% filter(Variable=="Amplifications_proportion",Level1 %in% c("Ca A1","Ca A2","Ca B")) %>% bind_cols(segmenttib)
+
+gg_CNB.amp = ggplot( vars.lungNENomics %>% filter(!is.na(group),group!="LCNEC",!WGD)  , aes(x=group,y=prop.amp,fill=group)) + 
+  geom_violin(scale="width",color=NA)+ geom_boxplot(width=0.1,fill="white") +#data = vars.lungNENomics[!vars.lungNENomics$WGD,]) + 
+  geom_quasirandom(data=vars.lungNENomics %>% filter(group=="sc-enriched",!WGD),col="white",shape=21)+ #col=c("black","red")[vars.lungNENomics$WGD+1]) + 
+  scale_fill_manual(values=arc4) +
+  theme_classic() + xlab("Molecular group") + ylab("Proportion of genome amplified") + 
+  geom_segment(data=segmenttib,aes(x=(x+0.03),xend=(xend-0.03),y=y,yend=y),inherit.aes = F)+
+  geom_text(data = Test_table_CNVs_tmp,aes(x=(x+xend)/2,y=(y+0.02),label=Significance),inherit.aes = F)+
+  guides(fill="none") +ylim(c(0,0.6))
+
+Test_table_CNVs_tmp = Test_table_CNVs %>% filter(Variable=="Amplifications_proportion",Level1 %in% c("Typical","Carcinoid","Atypical")) %>% bind_cols(segmenttib[c(4,1,2),])
+
+gg_CNB.amp.types = ggplot( vars.lungNENomics %>% filter(!is.na(group),group!="LCNEC",!WGD)  , aes(x=type,y=prop.amp,fill=type)) + 
+  geom_violin(scale="width",color=NA)+ geom_boxplot(width=0.1,fill="white") +#data = vars.lungNENomics[!vars.lungNENomics$WGD,]) + 
+  scale_fill_manual(values=type5) +
+  theme_classic() + xlab("Histopathological type") + ylab("Proportion of genome amplified") + 
+  geom_segment(data=segmenttib[c(1:2,4),],aes(x=(x+0.03),xend=(xend-0.03),y=y,yend=y),inherit.aes = F)+
+  geom_text(data = Test_table_CNVs_tmp,aes(x=(x+xend)/2,y=(y+0.02),label=Significance),inherit.aes = F)+
+  guides(fill="none") +ylim(c(0,0.6))
+
+gg_CNB.amp.grtypes = ggplot( vars.lungNENomics %>% filter(group!="LCNEC",!WGD)  , aes(x=group,y=prop.amp,fill=type)) + 
+  geom_violin(scale="width",color=NA) + geom_boxplot(position = position_dodge(preserve = "single",width = 0.9))+#width=0.1) + #,fill="white"
+  geom_quasirandom(data = vars.lungNENomics %>% filter(group %in% c("sc-enriched"),!WGD),col="white",shape=21) + 
+  scale_fill_manual(values=c(arc4,type5) ) +
+  theme_classic() + xlab("Molecular group") +  ylab("Proportion of genome amplified") + 
+  guides(fill="none")+ylim(c(0,0.6))
+
+# deletions
+Test_table_CNVs_tmp = Test_table_CNVs %>% filter(Variable=="Deletions_proportion",Level1 %in% c("Ca A1","Ca A2","Ca B")) %>% bind_cols(segmenttib)
+
+gg_CNB.del = ggplot( vars.lungNENomics %>% filter(!is.na(group),group!="LCNEC",!WGD)  , aes(x=group,y=prop.del,fill=group)) + 
+  geom_violin(scale="width",color=NA)+ geom_boxplot(width=0.1,fill="white") +#data = vars.lungNENomics[!vars.lungNENomics$WGD,]) + 
+  geom_quasirandom(data=vars.lungNENomics %>% filter(group=="sc-enriched",!WGD),col="white",shape=21)+ #col=c("black","red")[vars.lungNENomics$WGD+1]) + 
+  scale_fill_manual(values=arc4) +
+  theme_classic() + xlab("Molecular group") + ylab("Proportion of genome deleted") + 
+  geom_segment(data=segmenttib,aes(x=(x+0.03),xend=(xend-0.03),y=y,yend=y),inherit.aes = F)+
+  geom_text(data = Test_table_CNVs_tmp,aes(x=(x+xend)/2,y=(y+0.02),label=Significance),inherit.aes = F)+
+  guides(fill="none") +ylim(c(0,0.6))
+
+Test_table_CNVs_tmp = Test_table_CNVs %>% filter(Variable=="Deletions_proportion",Level1 %in% c("Typical","Carcinoid","Atypical")) %>% bind_cols(segmenttib[c(4,1,2),])
+
+gg_CNB.del.types = ggplot( vars.lungNENomics %>% filter(!is.na(group),group!="LCNEC",!WGD)  , aes(x=type,y=prop.del,fill=type)) + 
+  geom_violin(scale="width",color=NA)+ geom_boxplot(width=0.1,fill="white") + #data = vars.lungNENomics[!vars.lungNENomics$WGD,]) + 
+  scale_fill_manual(values=type5) +
+  theme_classic() + xlab("Histopathological type") + ylab("Proportion of genome deleted") + 
+  geom_segment(data=segmenttib[c(1:2,4),],aes(x=(x+0.03),xend=(xend-0.03),y=y,yend=y),inherit.aes = F)+
+  geom_text(data = Test_table_CNVs_tmp,aes(x=(x+xend)/2,y=(y+0.02),label=Significance),inherit.aes = F)+
+  guides(fill="none") +ylim(c(0,0.6))
+
+gg_CNB.del.grtypes = ggplot( vars.lungNENomics %>% filter(group!="LCNEC",!WGD)  , aes(x=group,y=prop.del,fill=type)) + 
+  geom_violin(scale="width",color=NA) + geom_boxplot(position = position_dodge(preserve = "single",width = 0.9))+#width=0.1) + #,fill="white"
+  geom_quasirandom(data = vars.lungNENomics %>% filter(group %in% c("sc-enriched"),!WGD),col="white",shape=21) + 
+  scale_fill_manual(values=c(arc4,type5) ) +
+  theme_classic() + xlab("Molecular group") +  ylab("Proportion of genome deleted") + 
+  guides(fill="none")+ylim(c(0,0.6))
+```
+
+Save statistical test results
+```{r}
+write_tsv(Test_table_smallvars,file = "/data/lungNENomics/work/alcalan/tomoveto_Descriptive_manuscript_data/TableS20_smallvarstats.tsv")
+write_tsv(Test_table_SVs,file = "/data/lungNENomics/work/alcalan/tomoveto_Descriptive_manuscript_data/TableS20_SVstats.tsv")
+write_tsv(Test_table_CNVs,file = "/data/lungNENomics/work/alcalan/tomoveto_Descriptive_manuscript_data/TableS20_CNVstats.tsv")
+```
+
+Save plots that will be used in Extended Data Figure 2A and Figure S9:
+```{r}
+ggsave("/data/lungNENomics/work/alcalan/Figures/Fig_burdens_08052025.svg",
+       (gg_TMB_smallvariants.types+gg_TMB_smallvariants+gg_TMB_smallvariants.grtypes)/(gg_SVB.types + gg_SVB+gg_SVB.grtypes)/(gg_CNB.amp.types+gg_CNB.amp+gg_CNB.amp.grtypes)/(gg_CNB.del.types+gg_CNB.del+gg_CNB.del.grtypes) + plot_annotation(tag_levels = 'a') & theme(plot.tag = element_text(face = 'bold')),
+       width = 8,height = 12)
+```
+
+### SVs vs SNVs with PCAWG data
+```{r}
+svs_snvs.num.med.per.Type = left_join(svs.num.med.per.Type,snvs.num.med.per.Type.sigs)
+colnames(svs_snvs.num.med.per.Type)[1] = "group"
+svs_snvs.num.med.per.Type = bind_rows(svs_snvs.num.med.per.Type,snv.num.lungNENomics.med)
+svs_snvs.num.med.per.Type2 = svs_snvs.num.med.per.Type %>% filter(group%in%c(types.tokeep,"Ca A1","Ca A2","Ca B","sc-enriched") )
+
+FigS9left = ggplot(svs_snvs.num.med.per.Type2,aes(x=med.n.SNVs,y=med.n.SVs,col=group)) + 
+  geom_point(size=(svs_snvs.num.med.per.Type2$group%in%c("Ca A1","Ca A2","Ca B","sc-enriched"))*2+1) + 
+  geom_hline(yintercept = median((svs_snvs.num.med.per.Type2 %>% filter( !group%in%c("Ca A1","Ca A2","Ca B","sc-enriched")))$med.n.SVs) , linetype="dashed") +
+  geom_vline(xintercept = median((svs_snvs.num.med.per.Type2 %>% filter( !group%in%c("Ca A1","Ca A2","Ca B","sc-enriched")))$med.n.SNVs) , linetype="dashed") + 
+  geom_text_repel(label=svs_snvs.num.med.per.Type2$group,
+                  size=(svs_snvs.num.med.per.Type2$group%in%c("Ca A1","Ca A2","Ca B","sc-enriched"))*2+3,max.overlaps = 50) +
+  scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x),labels = trans_format("log10", math_format(10^.x))) +
+  scale_color_manual(values = c(arc4))+
+  labs(title="",x="# SNVs (median)", y = "# SVs (median)")+
+  theme_classic() +
+  theme(legend.position = "none")
+
+FigS9Aleft
+```
+
+### CNVs 
+We compute the plot of the median CNV burdens and save them along with the SNV and SV burdens to form Fig. S9A-B.
+```{r}
+cnvs.prop.med.per.Type = cnvs.num.med.per.Type
+colnames(cnvs.prop.med.per.Type)[1] = "group"
+cnvs.prop.med.per.Type2 = bind_rows(cnvs.prop.med.per.Type,cnvs.prop.med.per.group) %>% filter(group%in%c(types.tokeep,"Ca A1","Ca A2","Ca B","sc-enriched") )
+
+FigS9right <- ggplot(cnvs.prop.med.per.Type2 ,aes(x=med.amp*100,y=med.del*100,col=group)) + 
+  geom_point(size=(cnvs.prop.med.per.Type2$group%in%c("Ca A1","Ca A2","Ca B","sc-enriched"))*2+1) + 
+  geom_hline(yintercept = median((cnvs.prop.med.per.Type2 %>% filter( !group%in%c("Ca A1","Ca A2","Ca B","sc-enriched")))$med.del)*100 , linetype="dashed") +
+  geom_vline(xintercept = median((cnvs.prop.med.per.Type2 %>% filter( !group%in%c("Ca A1","Ca A2","Ca B","sc-enriched")))$med.amp)*100 , linetype="dashed") + 
+  geom_text_repel(label=cnvs.prop.med.per.Type2$group,
+                  size=(cnvs.prop.med.per.Type2$group%in%c("Ca A1","Ca A2","Ca B","sc-enriched"))*2+3,max.overlaps = 10) +
+  scale_color_manual(values = c(arc4))+
+  labs(title="",x="% Genome amplified (median)", y = "% Genome deleted (median)")+
+  theme_classic() +
+  theme(legend.position = "none")
+
+FigS9right
+
+ggsave("/data/lungNENomics/work/alcalan/Figures/EDFig2A_scatter_plot_lungNENomics_pcawg_median.svg",plot = FigS9left + FigS9right,width = 8,height = 4)
+```
+
+### Compute ranks
+```{r}
+cnvs.prop.med.per.Type2 %>% mutate(med.amp.rank = rank(-med.amp), med.del.rank = rank(-med.del)) %>% filter(group%in%names(arc4)) #19-28 in amp, 9-25 in del /29
+svs_snvs.num.med.per.Type2 %>% mutate(n.SVs.rank = rank(med.n.SVs), n.SNVs.rank = rank(med.n.SNVs)) %>% filter(group%in%names(arc4)) #9 -13 in SVs, 5-11 in SNVs /29
+```
+
+### write tables
+```{r}
+write_tsv(vars.lungNENomics,file = "/data/lungNENomics/work/alcalan/tomoveto_Descriptive_manuscript_data/Table_S20_burdens.tsv")
+```
+
+### Compare with Age
+```{r}
+load("Descriptive_manuscript_data/combined_public_lungNENomics_clinical.RData")
+load("Descriptive_manuscript_data/combined_public_lungNENomics_technical_data.RData")
+
+burden.tib.clin = left_join(var_cli %>% filter(!is.na(WGS_batch)),
+                            left_join(burden.tib,
+                                      left_join(clinical_combined,technical_complete,by=c("manuscript_id", "lungNENomics_id")),
+                                      by=c("sample_id") ),by="sample_id" ) %>% mutate(group = factor(group,levels=c("Ca A1","Ca A2","Ca B","sc-enriched")))
+
+lm_age_smallvars = lm(n.SNVs~age_corrected + age_corrected*group-1,data=burden.tib.clin %>% filter(group!="sc-enriched") %>% mutate(group=droplevels(group)))
+lm_age_smallvars_A1diff = lm(n.SNVs~age_corrected+age_corrected:(group=="Ca A1")-1,data=burden.tib.clin %>% filter(group!="sc-enriched"))
+lm_age_smallvars_A2diff = lm(n.SNVs~age_corrected+age_corrected:(group=="Ca A2")-1,data=burden.tib.clin %>% filter(group!="sc-enriched"))
+lm_age_smallvars_Bdiff  = lm(n.SNVs~age_corrected+age_corrected:(group=="Ca B")-1,data=burden.tib.clin %>% filter(group!="sc-enriched"))
+lm_age_smallvars.ageonly = lm(n.SNVs~age_corrected-1,data=burden.tib.clin %>% filter(group!="sc-enriched"))
+summary(lm_age_smallvars)
+summary(lm_age_smallvars_A1diff)
+summary(lm_age_smallvars_A2diff)
+summary(lm_age_smallvars_Bdiff)
+summary(lm_age_smallvars.ageonly)
+anova(lm_age_smallvars.ageonly,lm_age_smallvars)#nodiff
+anova(lm_age_smallvars_A1diff,lm_age_smallvars)#nodiff
+anova(lm_age_smallvars_A2diff,lm_age_smallvars)#nodiff
+anova(lm_age_smallvars_Bdiff,lm_age_smallvars) #nodiff
+anova(lm_age_smallvars.ageonly,lm_age_smallvars) # nodiff => keep simplest
+
+summary(lm_age_smallvars) 
+summary(lm_age_smallvars.ageonly) # 53.5 mut/year, all groups similar
+plot(lm_age_smallvars) # some of Talya's samples have higher TMB, probably due to higher seq coverage
+
+# test glms
+## poisson
+glm_age_smallvars         = glm(n.SNVs~age_corrected+age_corrected:group-1,data=burden.tib.clin, family = poisson)
+glm_age_smallvars.ageonly = glm(n.SNVs~age_corrected,data=burden.tib.clin, family = poisson)
+AIC(glm_age_smallvars) # better with inter
+AIC(glm_age_smallvars.ageonly)
+summary(glm_age_smallvars)
+anova(glm_age_smallvars)
+
+## neg binom 
+burden.tib.clin4tests = burden.tib.clin %>% filter(group!="sc-enriched")
+burden.tib.clin4tests$CaA1 = (burden.tib.clin4tests$group=="Ca A1")*1
+burden.tib.clin4tests$CaA2 = (burden.tib.clin4tests$group=="Ca A2")*1
+burden.tib.clin4tests$CaB = (burden.tib.clin4tests$group=="Ca B")*1
+
+library(MASS)
+par(mfrow=c(1,2))
+hist(burden.tib.clin$n.SNVs,xlim = c(0,20000),nclass=20)
+hist(rnbinom(nrow(burden.tib.clin),size=3,mu = mean(burden.tib.clin$n.SNVs)),xlim = c(0,20000),nclass=10)
+summary(mfulli <- glm.nb(n.SNVs~age_corrected+age_corrected:CaA2+age_corrected:CaB, data=burden.tib.clin4tests)) 
+summary(mfull <- glm.nb(n.SNVs~age_corrected+age_corrected:CaA2+age_corrected:CaB-1, data=burden.tib.clin4tests))
+summary(mage <- glm.nb(n.SNVs~age_corrected-1, data=burden.tib.clin4tests))
+summary(magei <- glm.nb(n.SNVs~age_corrected, data=burden.tib.clin4tests)) # best
+summary(lmfulli <- lm(n.SNVs~age_corrected+age_corrected:CaA2+age_corrected:CaB, data=burden.tib.clin4tests))
+summary(lmfull <- lm(n.SNVs~age_corrected+age_corrected:CaA2+age_corrected:CaB-1, data=burden.tib.clin4tests))
+summary(lmagei <- lm(n.SNVs~age_corrected, data=burden.tib.clin4tests))
+summary(lmage  <- lm(n.SNVs~age_corrected-1, data=burden.tib.clin4tests))
+AIC(mfulli)
+AIC(mfull)
+AIC(mage)
+AIC(magei) # best
+AIC(lmagei)
+AIC(lmage)
+
+cor.test( magei$y, magei$fitted.values )
+
+glmnb.fit = predict(magei,newdata = tibble(age_corrected=seq(0,80,1)),se.fit = T)
+glmnb.fit.tib = tibble(age_corrected=seq(0,80,1),n.SNVs=exp(glmnb.fit$fit))
+
+glmnb.fit.ci.tib = tibble(age_corrected=c(seq(0,80,1),seq(80,0,-1)),
+                       n.SNVs=c(exp(glmnb.fit$fit+glmnb.fit$se.fit*2),rev(exp(glmnb.fit$fit-glmnb.fit$se.fit*2) )) )
+
+ggTMBage = ggplot(burden.tib.clin ,aes(x=age_corrected,y=n.SNVs )) + geom_point(aes(col=group)) + scale_color_manual(values = arc4)+
+  coord_cartesian(xlim=c(0,max(burden.tib.clin$age_corrected,na.rm=T)),ylim=c(0,10000),expand = F)+ 
+  geom_polygon(data=glmnb.fit.ci.tib,fill=rgb(0.5,0.5,0.5,0.5))+
+  geom_line(data=glmnb.fit.tib)+
+  theme_classic() + xlab("Age") + ylab("TMB (# small variants)")
+
+ggTMBage
+#lm 
+ggplot(burden.tib.clin ,aes(x=age_corrected,y=n.SNVs)) + geom_point(aes(col=group)) + scale_color_manual(values = arc4)+
+  coord_cartesian(xlim=c(0,max(burden.tib.clin$age_corrected,na.rm=T)),ylim=c(0,6000),expand = F)+ geom_smooth(method = "lm",formula = y~x-1)+
+  theme_classic() + xlab("Age") + ylab("TMB (# small variants)")
+
+# glm poisson
+ggplot(burden.tib.clin ,aes(x=age_corrected,y=n.SNVs )) + geom_point(aes(col=group)) + scale_color_manual(values = arc4)+
+  coord_cartesian(xlim=c(0,max(burden.tib.clin$age_corrected,na.rm=T)),ylim=c(0,10000),expand = F)+ 
+  geom_smooth(method = "glm",formula = y~x, method.args = list(family = "poisson"),se = TRUE)+
+  theme_classic() + xlab("Age") + ylab("TMB (# small variants)")
+
+# lm on log
+ggplot(burden.tib.clin ,aes(x=age_corrected,y=n.SNVs+1 )) + geom_point(aes(col=group)) + scale_color_manual(values = arc4)+
+  coord_cartesian(xlim=c(0,max(burden.tib.clin$age_corrected,na.rm=T)),ylim=c(1,10000),expand = F)+ 
+  geom_smooth(method = "lm",formula = y~x)+
+  theme_classic() + xlab("Age") + ylab("TMB (# small variants)") + scale_y_log10()
+
+
+lm_age_SVs = lm(SVB.somatic~age_corrected+age_corrected:group-1,data=burden.tib.clin %>% filter(group!="sc-enriched"))
+lm_age_SVs_A1diff = lm(SVB.somatic~age_corrected+age_corrected:(group=="Ca A1")-1,data=burden.tib.clin %>% filter(group!="sc-enriched"))
+lm_age_SVs_A2diff = lm(SVB.somatic~age_corrected+age_corrected:(group=="Ca A2")-1,data=burden.tib.clin %>% filter(group!="sc-enriched"))
+lm_age_SVs_Bdiff  = lm(SVB.somatic~age_corrected+age_corrected:(group=="Ca B")-1,data=burden.tib.clin %>% filter(group!="sc-enriched"))
+lm_age_SVs.ageonly = lm(SVB.somatic~age_corrected-1,data=burden.tib.clin %>% filter(group!="sc-enriched"))
+
+anova(lm_age_SVs.ageonly,lm_age_SVs)#nodiff
+anova(lm_age_SVs.ageonly,lm_age_SVs_A1diff)#nodiff
+anova(lm_age_SVs.ageonly,lm_age_SVs_A2diff)# nodiff
+anova(lm_age_SVs.ageonly,lm_age_SVs_Bdiff) # diff
+anova(lm_age_SVs.ageonly,lm_age_SVs.ageonly) # nodiff 
+AIC(lm_age_SVs)
+AIC(lm_age_SVs_A1diff)
+AIC(lm_age_SVs_A2diff) # worst
+AIC(lm_age_SVs_Bdiff) # best model
+AIC(lm_age_SVs.ageonly)
+
+summary(lm_age_SVs) # 0.19 mut/year Ca1 signif
+summary(lm_age_SVs_A1diff) # not signif
+summary(lm_age_SVs_A2diff) # not signif
+summary(lm_age_SVs_Bdiff) # signif
+
+plot(lm_age_SVs)
+
+# NB GLM
+summary(mfullip <- glm.nb(SVB.somatic~age_corrected+CaA2+CaB+age_corrected:CaA2+age_corrected:CaB, data=burden.tib.clin4tests))
+summary(msomeip <- glm.nb(SVB.somatic~age_corrected+CaA2+CaB, data=burden.tib.clin4tests))
+summary(mip <- glm.nb(SVB.somatic~CaA2+CaB, data=burden.tib.clin4tests)) 
+summary(mfulli <- glm.nb(SVB.somatic~age_corrected+age_corrected:CaA2+age_corrected:CaB, data=burden.tib.clin4tests)) 
+summary(mfull <- glm.nb(SVB.somatic~age_corrected+age_corrected:CaA2+age_corrected:CaB-1, data=burden.tib.clin4tests))
+summary(mage <- glm.nb(SVB.somatic~age_corrected-1, data=burden.tib.clin4tests))
+summary(magei <- glm.nb(SVB.somatic~age_corrected, data=burden.tib.clin4tests)) # best
+summary(lmfulli <- lm(SVB.somatic~age_corrected+age_corrected:CaA2+age_corrected:CaB, data=burden.tib.clin4tests))
+summary(lmfull <- lm(SVB.somatic~age_corrected+age_corrected:CaA2+age_corrected:CaB-1, data=burden.tib.clin4tests))
+summary(lmagei <- lm(SVB.somatic~age_corrected, data=burden.tib.clin4tests))
+summary(lmage  <- lm(SVB.somatic~age_corrected-1, data=burden.tib.clin4tests))
+AIC(mfullip) 
+AIC(msomeip) # best model
+AIC(mip) # similar
+AIC(mfulli) # similar
+anova(msomeip,mip) # roughly same with age
+AIC(mfull)
+AIC(mage)
+AIC(magei) # best
+AIC(lmagei)
+AIC(lmage)
+
+cor.test( magei$y, magei$fitted.values )
+
+newdataA1 = tibble(age_corrected=seq(min(burden.tib.clin$age_corrected[burden.tib.clin$group=="Ca A1"]),max(burden.tib.clin$age_corrected[burden.tib.clin$group=="Ca A1"]),1),
+                   CaA2=0,CaB=0, group="Ca A1" )
+newdataA2 = tibble(age_corrected=seq(min(burden.tib.clin$age_corrected[burden.tib.clin$group=="Ca A2"]),max(burden.tib.clin$age_corrected[burden.tib.clin$group=="Ca A2"]),1),
+                   CaA2=1,CaB=0, group="Ca A2" )
+newdataB  = tibble(age_corrected=seq(min(burden.tib.clin$age_corrected[burden.tib.clin$group=="Ca B"]),max(burden.tib.clin$age_corrected[burden.tib.clin$group=="Ca B"]),1),
+                   CaA2=0,CaB=1, group="Ca B" )
+
+glmnb.fit = list(predict(mip,newdata = newdataA1 ,se.fit = T) ,predict(mip,newdata = newdataA2 ,se.fit = T) , predict(mip,newdata = newdataB ,se.fit = T) ) 
+glmnb.fit.tib.A1 = bind_cols(newdataA1,SVB.somatic=exp(glmnb.fit[[1]]$fit))
+glmnb.fit.tib.A2 = bind_cols(newdataA2,SVB.somatic=exp(glmnb.fit[[2]]$fit))
+glmnb.fit.tib.B  = bind_cols(newdataB,SVB.somatic=exp(glmnb.fit[[3]]$fit))
+glmnb.fit.ci.tib.A1 = tibble(age_corrected=c(glmnb.fit.tib.A1$age_corrected,rev(glmnb.fit.tib.A1$age_corrected)),
+                          SVB.somatic=c(exp(glmnb.fit[[1]]$fit+glmnb.fit[[1]]$se.fit*2),
+                                        rev(exp(glmnb.fit[[1]]$fit-glmnb.fit[[1]]$se.fit*2) )),
+                          CaA2 = 0,CaB = 0,group="Ca A1")
+glmnb.fit.ci.tib.A2 = tibble(age_corrected=c(glmnb.fit.tib.A2$age_corrected,rev(glmnb.fit.tib.A2$age_corrected)),
+                             SVB.somatic=c(exp(glmnb.fit[[2]]$fit+glmnb.fit[[2]]$se.fit*2),
+                                           rev(exp(glmnb.fit[[2]]$fit-glmnb.fit[[2]]$se.fit*2) )),
+                             CaA2 = 0,CaB = 0,group="Ca A2")
+glmnb.fit.ci.tib.B = tibble(age_corrected=c(glmnb.fit.tib.B$age_corrected,rev(glmnb.fit.tib.B$age_corrected)),
+                             SVB.somatic=c(exp(glmnb.fit[[3]]$fit+glmnb.fit[[3]]$se.fit*2),
+                                           rev(exp(glmnb.fit[[3]]$fit-glmnb.fit[[3]]$se.fit*2) )),
+                             CaA2 = 0,CaB = 0,group="Ca B")
+
+
+ggSVBage = ggplot(burden.tib.clin ,aes(x=age_corrected,y=SVB.somatic)) + geom_point(aes(col=group)) + 
+  scale_color_manual(values = c(arc4) )+
+  coord_cartesian(xlim=c(0,max(burden.tib.clin$age_corrected,na.rm=T)),ylim=c(0,200),expand = F)+ 
+  geom_polygon(data=glmnb.fit.ci.tib.A1,fill=rgb(0.5,0.5,0.5,0.5))+
+  geom_polygon(data=glmnb.fit.ci.tib.A2,fill=rgb(0.5,0.5,0.5,0.5))+
+  geom_polygon(data=glmnb.fit.ci.tib.B,fill=rgb(0.5,0.5,0.5,0.5))+
+  geom_line(data=glmnb.fit.tib.A1,aes(col=group))+
+  geom_line(data=glmnb.fit.tib.A2,aes(col=group))+
+  geom_line(data=glmnb.fit.tib.B,aes(col=group))+
+  theme_classic() + xlab("Age") + ylab("SVB (# SVs)")
+
+ggSVBage
+
+## CNVs 
+### amp 
+lm_age_CNVs.amp = lm(CNB.amp~age_corrected+age_corrected:group-1,data=burden.tib.clin %>% filter(group!="sc-enriched",sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))
+lm_age_CNVs.amp_A1diff = lm(CNB.amp~age_corrected+age_corrected:(group=="Ca A1")-1,data=burden.tib.clin %>% filter(group!="sc-enriched",sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))
+lm_age_CNVs.amp_A2diff = lm(CNB.amp~age_corrected+age_corrected:(group=="Ca A2")-1,data=burden.tib.clin %>% filter(group!="sc-enriched",sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))
+lm_age_CNVs.amp_Bdiff  = lm(CNB.amp~age_corrected+age_corrected:(group=="Ca B")-1,data=burden.tib.clin %>% filter(group!="sc-enriched",sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))
+lm_age_CNVs.amp.ageonly = lm(CNB.amp~age_corrected-1,data=burden.tib.clin %>% filter(group!="sc-enriched",sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))
+
+anova(lm_age_CNVs.amp.ageonly,lm_age_CNVs.amp)#nodiff
+anova(lm_age_CNVs.amp.ageonly,lm_age_CNVs.amp_A1diff)#diff
+anova(lm_age_CNVs.amp.ageonly,lm_age_CNVs.amp_A2diff)# nodiff
+anova(lm_age_CNVs.amp.ageonly,lm_age_CNVs.amp_Bdiff) # nodiff
+AIC(lm_age_CNVs.amp)
+AIC(lm_age_CNVs.amp_A1diff) # best model
+AIC(lm_age_CNVs.amp_A2diff) # worst
+AIC(lm_age_CNVs.amp_Bdiff) 
+AIC(lm_age_CNVs.amp.ageonly)
+
+summary(lm_age_CNVs.amp) # not signif
+summary(lm_age_CNVs.amp_A1diff) # 8.2/year in A1 signif, only 0.7 in others
+summary(lm_age_CNVs.amp_A2diff) # not signif
+summary(lm_age_CNVs.amp_Bdiff) # not signif
+
+# NB glm
+summary(CNVamp.NB <- glm.nb(CNB.amp~age_corrected+age_corrected:group-1,
+                        data=burden.tib.clin %>% filter(group!="sc-enriched") %>% mutate(group=droplevels(group))))
+anova(CNVamp.NB)
+
+summary(m1 <- glm.nb(CNB.amp~age_corrected+age_corrected:CaA2+age_corrected:CaB, 
+                     data=burden.tib.clin4tests %>% filter(group!="sc-enriched",!sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))) # no accumulation with age, not realistic...
+summary(m1 <- glm.nb(CNB.amp~age_corrected+age_corrected:CaA2+age_corrected:CaB-1, 
+                     data=burden.tib.clin4tests %>% filter(group!="sc-enriched",!sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))) # A2 faster
+summary(lm1 <- lm(CNB.amp~age_corrected+age_corrected:CaA2+age_corrected:CaB, 
+                  data=burden.tib.clin4tests %>% filter(group!="sc-enriched",!sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))) # no accumulation with age, not realistic...
+summary(lm1 <- lm(CNB.amp~age_corrected+age_corrected:CaA2+age_corrected:CaB-1, 
+                  data=burden.tib.clin4tests %>% filter(group!="sc-enriched",!sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))) # not signif
+
+ggCNVampage = ggplot(burden.tib.clin%>%filter(!sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]),aes(x=age_corrected,y=CNB.amp)) + geom_point(aes(col=group)) + 
+  scale_color_manual(values = c(arc4,"TRUE"= arc4[[2]], "FALSE"="gray") )+
+  coord_cartesian(xlim=c(0,max(burden.tib.clin$age_corrected,na.rm=T)),ylim=c(0,50),expand = F)+ 
+  geom_smooth(aes(col=group=="Ca A2"),method = "lm",formula = y~x-1)+
+  theme_classic() + xlab("Age") + ylab("CNB (# amplified segments)")
+
+### del
+lm_age_CNVs.del = lm(CNB.del~age_corrected+age_corrected:group-1,data=burden.tib.clin %>% filter(group!="sc-enriched",sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))
+lm_age_CNVs.del_A1diff = lm(CNB.del~age_corrected+age_corrected:(group=="Ca A1")-1,data=burden.tib.clin %>% filter(group!="sc-enriched",sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))
+lm_age_CNVs.del_A2diff = lm(CNB.del~age_corrected+age_corrected:(group=="Ca A2")-1,data=burden.tib.clin %>% filter(group!="sc-enriched",sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))
+lm_age_CNVs.del_Bdiff  = lm(CNB.del~age_corrected+age_corrected:(group=="Ca B")-1,data=burden.tib.clin %>% filter(group!="sc-enriched",sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))
+lm_age_CNVs.del.ageonly = lm(CNB.del~age_corrected-1,data=burden.tib.clin %>% filter(group!="sc-enriched",sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))
+
+anova(lm_age_CNVs.del.ageonly,lm_age_CNVs.del)#nodiff
+anova(lm_age_CNVs.del.ageonly,lm_age_CNVs.del_A1diff)#nodiff
+anova(lm_age_CNVs.del.ageonly,lm_age_CNVs.del_A2diff)# nodiff
+anova(lm_age_CNVs.del.ageonly,lm_age_CNVs.del_Bdiff) # nodiff
+AIC(lm_age_CNVs.del) # worst model
+AIC(lm_age_CNVs.del_A1diff) # 
+AIC(lm_age_CNVs.del_A2diff) # 
+AIC(lm_age_CNVs.del_Bdiff) 
+AIC(lm_age_CNVs.del.ageonly) # best model
+
+summary(lm_age_CNVs.del) # not signif
+summary(lm_age_CNVs.del_A1diff) # 8.2/year in A1 signif, only 0.7 in others
+summary(lm_age_CNVs.del_A2diff) # not signif
+summary(lm_age_CNVs.del_Bdiff) # not signif
+summary(lm_age_CNVs.del.ageonly) #not signif
+
+summary(m1 <- glm.nb(CNB.del~age_corrected+age_corrected:CaA2+age_corrected:CaB, 
+                     data=burden.tib.clin4tests %>% filter(group!="sc-enriched",!sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))) # no accumulation with age for B
+summary(m1 <- glm.nb(CNB.del~age_corrected+age_corrected:CaA2+age_corrected:CaB-1, 
+                     data=burden.tib.clin4tests %>% filter(group!="sc-enriched",!sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))) # B slower
+summary(lm1 <- lm(CNB.del~age_corrected+age_corrected:CaA2+age_corrected:CaB, 
+                  data=burden.tib.clin4tests %>% filter(group!="sc-enriched",!sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))) # no accumulation with age for B
+summary(lm1 <- lm(CNB.del~age_corrected+age_corrected:CaA2+age_corrected:CaB-1, 
+                  data=burden.tib.clin4tests %>% filter(group!="sc-enriched",!sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]))) # B slower
+
+ggCNVdelage = ggplot(burden.tib.clin%>%filter(!sample_id%in%CNVsummary$tumor_id[CNVsummary$wholeGenomeDuplication]),aes(x=age_corrected,y=CNB.del)) + geom_point(aes(col=group)) + 
+  scale_color_manual(values = c(arc4,"TRUE"= arc4[[3]], "FALSE"="gray") )+
+  coord_cartesian(xlim=c(0,max(burden.tib.clin$age_corrected,na.rm=T)),ylim=c(0,20),expand = F)+ 
+  geom_smooth(aes(col=group=="Ca B"),method = "lm",formula = y~x-1)+
+  theme_classic() + xlab("Age") + ylab("CNB (# deleted segments)")
+
+ggsave("/data/lungNENomics/work/alcalan/Figures/Fig_burdens_age.png",
+       (ggTMBage + ggSVBage) / (ggCNVampage + ggCNVdelage) + plot_annotation(tag_levels = 'a') & theme(plot.tag = element_text(face = 'bold')),
+       height=3.5*2,width=4.5*2)
+```
+
+# Session info
+```{r}
+sessionInfo()
+```
