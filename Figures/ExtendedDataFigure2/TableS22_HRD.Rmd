@@ -1,0 +1,65 @@
+---
+title: "EDFig2a and FigS9"
+author: "N. Alcala"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Table S22: homologuous recombination deficiency analysis
+
+This document produces Table S22 from the lungNENomics manuscript, which displays the HRD status of samples from the lung NET cohort.
+
+# Load files
+## Load libraries
+
+```{r pressure, echo=FALSE}
+library(CHORD)
+library(mutSigExtractor)
+library(tidyverse)
+library(BSgenome.Hsapiens.UCSC.hg38)
+```
+
+# load small variants
+```{r}
+load("/data/lungNENomics/work/Descriptive_manuscript_data/WGS_data/dataset_snv_PCA_LCNEC_ITH.RData")
+dataset_snv
+
+# load SVs
+#### lungNENomics
+dataset.sv = read_tsv("/data/lungNENomics/work/alcalan/WGS/structural_variants/sv-somatic-cns-nf_lungNENomicsAndPublic_20092022_results/SVs_annotated_somatic_PONfiltered.tsv")
+dataset.sv = dataset.sv %>% mutate(Sample_name=str_remove(Sample_name,"_T$"),Sample_name=str_replace(Sample_name,"-","_"))
+dataset.sv = dataset.sv[!duplicated(dataset.sv[,c("ID","Sample_name")]),] %>% filter(nb_germline_100bp==0) 
+
+## format svs
+svs.chord = dataset.sv %>% mutate(strand1 = substr(STRANDS,1,1), strand2=substr(STRANDS,2,2),
+                                   sv_len = case_when(SVTYPE=="TRA"~NA,
+                                                      TRUE~abs(0.5*(start.B1+end.B1)-0.5*(start.B2+end.B2) ))) %>% 
+  dplyr::select(Sample_name,SVTYPE,sv_len)  %>% 
+  rename(SVTYPE="sv_type")
+
+# format input
+## format SNVs
+snvs.chord  = dataset_snv %>% filter(str_length(Ref)==1 & str_length(Alt)==1,Chr!="M") %>% dplyr::select(sample_id,Chr,Start,Ref,Alt) 
+## format indels
+indels.chord = dataset_snv %>% filter(Ref=="-" | Alt=="-",Chr!="M") %>% dplyr::select(sample_id,Chr,Start,Ref,Alt) 
+
+contexts_all = lapply( unique(dataset_snv$sample_id), function(x)
+contexts <- extractSigsChord(
+  df.snv = (snvs.chord %>% filter(sample_id==x))[,-1],
+  df.indel = (indels.chord %>% filter(sample_id==x))[,-1],
+  df.sv = (svs.chord %>% filter(Sample_name==x))[,-1],
+  ref.genome =BSgenome.Hsapiens.UCSC.hg38,sample.name = x)
+)
+
+contexts_all2 = merged_contexts <- do.call(rbind, contexts_all)
+```
+
+# predict HRD
+```{r}
+chord_output <- chordPredict(contexts_all2, do.bootstrap=T, verbose=T)
+write_tsv(chord_output, 'TableS22_chord_HRD_pred.tsv')
+```
