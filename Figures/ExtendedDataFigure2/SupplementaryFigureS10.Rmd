@@ -1,0 +1,1238 @@
+---
+title: "FigS10"
+author: "N. Alcala"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Figure S10: mutational signatures analysis comparisons
+
+This document produces Figure S10 from the lungNENomics manuscript, which displays the mutational signatures of different types of variants compared across molecular groups and histological types. It also produces the data presented in Table S21.
+
+# Load files
+## load color palette
+```{r}
+# useful variables
+source("../../Colour_palettes.R")
+
+# alterations
+SBScols = c(SBS1="#afe9d6ff",SBS5="#afd2e9ff",SBS8="#e295ccff",SBS13="#c837aaff",SBS18="#a02c57ff",SBS26="#808080ff")
+IDcols =  c(ID1="#ffccaaff",ID2="#ff9955ff",ID3="#ff6600ff",ID5="#aa4400ff",ID8="#d38d5fff",ID9="#deaa87ff")
+```
+## Load libraries
+Note that sigvar is on github and has to be installed with devtools or similar
+```{r, echo=FALSE}
+library(ggforce)
+library(ggbeeswarm)
+library(patchwork)
+library(readxl)
+library(sigvar)
+library(tidyverse)
+library(sigvar)
+library(ggpubr)
+library(broom)
+```
+
+## load signature attributions
+We load here the COSMIC or signal signatures signature attributions
+```{r}
+SV_sigs = read_tsv("/data/lungNENomics/work/alcalan/WGS/structural_variants/sv-somatic-cns-nf_lungNENomicsAndPublic_20092022_results/SV_signatures/release1_16Jun2023/decomposition/Decompose_Solution/Activities/Decompose_Solution_Activities.txt")
+SV_sigs$Samples = str_replace(SV_sigs$Samples,"-","_")
+SV_sigs$Samples = str_replace(SV_sigs$Samples,"_T$","")
+
+CNV_sigs= read_tsv("/data/lungNENomics/work/alcalan/WGS/CNV/release1.1_PURPLE_19052023/mutational_signatures/decomposition/Decompose_Solution/Activities/Decompose_Solution_Activities.txt")
+
+SBS_sigs  = read_tsv("/data/lungNENomics/work/alcalan/WGS/small_variants/somatic/release2_intersectmnps_15042023/mutational_signatures/lungNENomics/SBS96/Suggested_Solution/COSMIC_SBS96_Decomposed_Solution/Activities/COSMIC_SBS96_Activities.txt")
+SBS_sigs$Samples = str_replace(SBS_sigs$Samples,"-","_")
+SBS_sigs$Samples = str_replace(SBS_sigs$Samples,"_final","")
+ID_sigs   = read_tsv("/data/lungNENomics/work/alcalan/WGS/small_variants/somatic/release2_intersectmnps_15042023/mutational_signatures/lungNENomics/ID83/Suggested_Solution/COSMIC_ID83_Decomposed_Solution/Activities/COSMIC_ID83_Activities.txt")
+ID_sigs$Samples = str_replace(ID_sigs$Samples,"-","_")
+ID_sigs$Samples = str_replace(ID_sigs$Samples,"_final","")
+# note: no DBS
+
+#load GEL signature attributions for comparison
+SVsigs_GEL.samples = read_xlsx("/data/lungNENomics/work/alcalan/references/mutational_signatures/Degasperi2020_suptables.xlsx",sheet=2)
+SVsigs_GEL = read_xlsx("/data/lungNENomics/work/alcalan/references/mutational_signatures/Degasperi2020_suptables.xlsx",sheet=8)
+colnames(SVsigs_GEL)[1] = "ID"
+
+SVsigs_GEL.refs = read_xlsx("/data/lungNENomics/work/alcalan/references/mutational_signatures/Degasperi2020_suptables.xlsx",sheet=6)
+SVsigs_GEL = left_join(SVsigs_GEL,SVsigs_GEL.samples)
+```
+
+
+## Load metadata
+
+```{r}
+Attributes = read_tsv(unzip('../../Data/GabrielEtAl2020/Attributes.txt.zip')[1])
+load("/data/lungNENomics/work/Descriptive_manuscript_data/MOFA/MOFA.Exp.Meth.Alt.CNV_lungNENomicsCombined/ParetoTI/variables_archetypes_MOFA_LNET.RData") # data also contained in Table S1
+var_cli2 = read_tsv("/home/alcalan/lungNENomics/var_cli_plus_23022024.tsv")
+gigascience_attributes = read_tsv("/data/lungNENomics/work/SextonoatesA/Attributes.txt")
+var_LNET$sample_id = as.character(var_LNET$sample_id)
+var_LNET$group = var_LNET$archetype_k4_LF3_label
+
+var_cli = bind_rows(var_LNET, Attributes %>% filter(Histopathology_simplified%in%c("LCNEC","SCLC")) %>% 
+                      mutate(sample_id = Sample_ID, group=Histopathology_simplified) %>% dplyr::select(sample_id,group) )
+var_cli = bind_rows(var_cli,tibble(sample_id=c("LCNEC3T","LCNEC4T","S00715"),group="LCNEC") )
+var_cli = left_join(var_cli, var_cli2 %>% dplyr::select(sample_id,age_cont)) # add age, not necessary if age as continuous variable in Table S1
+```
+
+Retrieve sample names for LNEN cohort samples with WGS 
+```{r}
+WGS_LNENcohort_samples = var_cli %>% filter(str_detect(omics_group,"WGS"),!is.na(group)) %>% pull(sample_id)
+WGS_LNENcohort_samples = c(WGS_LNENcohort_samples, "LCNEC3T","LCNEC4T","S00715","S01318","S01468","S01496","S01499","S01505","S02267") #Note: S01318 and 1468 are a former smoker
+```
+
+# Analyses
+We first format the data for downstream analyses, joining the signature data with clinical data and normalizing the data to obtain relative signature attributions.
+```{r}
+SV_sigs.group = left_join(tibble(Samples=var_cli$sample_id,group=var_cli$group) %>% filter(Samples %in% WGS_LNENcohort_samples), SV_sigs ) 
+SV_sigs.group[is.na(SV_sigs.group)] = 0 # fill samples with no SVs detected
+SV_sigs.group.stats = SV_sigs.group %>% pivot_longer(cols = RefSigR2:RefSigR15,names_to = "Signature",values_to = "Mutations") %>% group_by(group,Signature) %>% 
+  summarize(prop=mean(Mutations>0),med=median(Mutations[Mutations>0]))
+SV_sigs.group.stats$med[is.na(SV_sigs.group.stats$med)] = 0
+
+CNV_sigs.group = left_join(tibble(Samples=var_cli$sample_id,group=var_cli$group) %>% filter(Samples %in% WGS_LNENcohort_samples),CNV_sigs ) 
+CNV_sigs.group[is.na(CNV_sigs.group)] # no samples without CNV sigs
+CNV_sigs.group.stats = CNV_sigs.group %>% pivot_longer(cols = CN1:CN21,names_to = "Signature",values_to = "Mutations") %>% group_by(group,Signature) %>% 
+  summarize(prop=mean(Mutations>0),med=median(Mutations[Mutations>0]))
+CNV_sigs.group.stats$med[is.na(CNV_sigs.group.stats$med)] = 0
+
+SBS_sigs.group = left_join(tibble(Samples=var_cli$sample_id,group=var_cli$group) %>% filter(Samples %in% WGS_LNENcohort_samples),SBS_sigs )
+SBS_sigs.group[is.na(SBS_sigs.group)] # no samples without CNV sigs
+SBS_sigs.group.stats = SBS_sigs.group %>% pivot_longer(cols = SBS1:SBS90,names_to = "Signature",values_to = "Mutations") %>% group_by(group,Signature) %>% 
+  summarize(prop=mean(Mutations>0),med=median(Mutations[Mutations>0]))
+SBS_sigs.group.stats$med[is.na(SBS_sigs.group.stats$med)] = 0
+
+ID_sigs.group = left_join(tibble(Samples=var_cli$sample_id,group=var_cli$group) %>% filter(Samples %in% WGS_LNENcohort_samples),ID_sigs )
+ID_sigs.group[is.na(ID_sigs.group)] # no samples without CNV sigs
+ID_sigs.group.stats = ID_sigs.group %>% pivot_longer(cols = ID1:ID9,names_to = "Signature",values_to = "Mutations") %>% group_by(group,Signature) %>% 
+  summarize(prop=mean(Mutations>0),med=median(Mutations[Mutations>0]))
+ID_sigs.group.stats$med[is.na(ID_sigs.group.stats$med)] = 0
+
+#Compute relative abundances 
+SV_sigs.group.props = sweep(SV_sigs.group[,3:10],1,rowSums(SV_sigs.group[,3:10]),"/" )
+colnames(SV_sigs.group.props) = colnames(SV_sigs.group[,3:10])
+SV_sigs.group.props$group = SV_sigs.group$group
+
+CNV_sigs.group.props = sweep(CNV_sigs.group[,3:7],1,rowSums(CNV_sigs.group[,3:7]),"/" )
+colnames(CNV_sigs.group.props) = colnames(CNV_sigs.group[,3:7])
+CNV_sigs.group.props$group = CNV_sigs.group$group
+
+SBS_sigs.group.props = sweep(SBS_sigs.group[,3:13],1,rowSums(SBS_sigs.group[,3:13]),"/" )
+colnames(SBS_sigs.group.props) = colnames(SBS_sigs.group[,3:13])
+SBS_sigs.group.props$group = SBS_sigs.group$group
+
+ID_sigs.group.props = sweep(ID_sigs.group[,3:8],1,rowSums(ID_sigs.group[,3:8]),"/" )
+colnames(ID_sigs.group.props) = colnames(ID_sigs.group[,3:8])
+ID_sigs.group.props$group = ID_sigs.group$group
+
+## total proportions
+full_join0 <- function(x, y, fill = 0L, ...){
+  z <- full_join(x, y, ...)
+  new_cols <- setdiff(names(z), names(x))
+  z <- replace_na(z, setNames(as.list(rep(fill, length(new_cols))), new_cols))
+  z
+}
+
+sigs.groups = full_join0(full_join0(full_join0(SBS_sigs.group,ID_sigs.group), CNV_sigs.group), SV_sigs.group) %>% dplyr::relocate(group,.before=SBS1)
+
+sigs.group.props = sweep(sigs.groups[,3:ncol(sigs.groups)],1,rowSums(sigs.groups[,3:ncol(sigs.groups)]),"/" ) # total proportion across all types of variants
+colnames(sigs.group.props) = colnames(sigs.groups[,3:ncol(sigs.groups)])
+sigs.group.props$group = sigs.groups$group
+```
+
+We remove signatures with a proportion below 5% 
+```{r}
+### remove sigs <5%
+sigs.groups.5p = sigs.groups
+sigs.groups.5p[,2+1:(ncol(SBS_sigs)-1)][sweep(sigs.groups.5p[,2+1:(ncol(SBS_sigs)-1)], 1, rowSums(sigs.groups.5p[,2+1:(ncol(SBS_sigs)-1)]),"/" )<0.05] = 0
+sigs.groups.5p[,2+(ncol(SBS_sigs)):(ncol(SBS_sigs)+ncol(ID_sigs)-2)][sweep(sigs.groups.5p[,2+(ncol(SBS_sigs)):(ncol(SBS_sigs)+ncol(ID_sigs)-2)], 1, rowSums(sigs.groups.5p[,2+(ncol(SBS_sigs)):(ncol(SBS_sigs)+ncol(ID_sigs)-2)]),"/" )<0.05] = 0
+sigs.groups.5p[,2+(ncol(SBS_sigs)+ncol(ID_sigs)-1):(ncol(SBS_sigs)+ncol(ID_sigs)+ncol(CNV_sigs)-3)][sweep(sigs.groups.5p[,2+(ncol(SBS_sigs)+ncol(ID_sigs)-1):(ncol(SBS_sigs)+ncol(ID_sigs)+ncol(CNV_sigs)-3)], 1, rowSums(sigs.groups.5p[,2+(ncol(SBS_sigs)+ncol(ID_sigs)-1):(ncol(SBS_sigs)+ncol(ID_sigs)+ncol(CNV_sigs)-3)]),"/" )<0.05] = 0
+sigs.groups.5p[,2+(ncol(SBS_sigs)+ncol(ID_sigs)+ncol(CNV_sigs)-2):(ncol(SBS_sigs)+ncol(ID_sigs)+ncol(CNV_sigs)+ncol(SV_sigs)-4)][sweep(sigs.groups.5p[,2+(ncol(SBS_sigs)+ncol(ID_sigs)+ncol(CNV_sigs)-2):(ncol(SBS_sigs)+ncol(ID_sigs)+ncol(CNV_sigs)+ncol(SV_sigs)-4)], 1, rowSums(sigs.groups.5p[,2+(ncol(SBS_sigs)+ncol(ID_sigs)+ncol(CNV_sigs)-2):(ncol(SBS_sigs)+ncol(ID_sigs)+ncol(CNV_sigs)+ncol(SV_sigs)-4)]),"/" )<0.05] = 0
+
+sigs.groups.5p$group[sigs.groups.5p$group=="LCNEC" & sigs.groups.5p$SBS4>0] = "LCNEC (smoker)"
+sigs.groups.5p$group[sigs.groups.5p$group=="LCNEC" & sigs.groups.5p$SBS4==0] = "LCNEC (non-smoker)"
+sigs.groups.5p$group = factor(sigs.groups.5p$group,levels = c("Ca A1","Ca A2","Ca B","sc-enriched","LCNEC (non-smoker)","LCNEC (smoker)"))
+```
+
+## Compare signature attributions per group
+
+### Dot plots (Fig. S10A)
+```{r}
+# by type of alteration
+sigs.groups.5p.norm = sigs.groups.5p
+sigs.groups.5p.norm[,-(1:2)] = sigs.groups.5p.norm[,-(1:2)]/3088269832*10**6 # based on purple length
+
+## SBS
+gg_SBS = plot_dots(sigs.groups.5p.norm[,-c(1,which(colSums(sigs.groups.5p[,-(1:2)])==0)+2)][,c(1:11)] %>% filter(!is.na(group)),
+          group = "group",median = TRUE,normalized = FALSE) + 
+  scale_color_gradient2(low = "yellow",mid = "violet",high = "darkblue",midpoint = 0,trans="log10") + 
+  theme(axis.title.x = element_blank(),axis.text.x = element_blank()) + guides(size="none") 
+
+## ID
+gg_ID = plot_dots(sigs.groups.5p.norm[,-c(1,which(colSums(sigs.groups.5p[,-(1:2)])==0)+2)][,c(1,12:17)] %>% filter(!is.na(group)),
+          group = "group",median = TRUE,normalized = FALSE) + 
+  scale_color_gradient2(low = "yellow",mid = "violet",high = "darkblue",midpoint = -1,trans="log10") +
+  theme(axis.title.x = element_blank(),axis.text.x = element_blank()) + guides(size="none")
+## CN
+gg_CN = plot_dots(sigs.groups.5p.norm[,-c(1,which(colSums(sigs.groups.5p[,-(1:2)])==0)+2)][,c(1,18:22)] %>% filter(!is.na(group)),
+          group = "group",median = TRUE,normalized = FALSE) + 
+  scale_color_gradient2(low = "yellow",mid = "violet",high = "darkblue",midpoint = -1.5,trans="log10")  +
+  theme(axis.title.x = element_blank(),axis.text.x = element_blank()) + guides(size="none")
+## SV
+gg_SV = plot_dots(sigs.groups.5p.norm[,-c(1,which(colSums(sigs.groups.5p[,-(1:2)])==0)+2)][,c(1,23:30)] %>% filter(!is.na(group)),
+                  group = "group",median = TRUE,normalized = FALSE) + 
+  scale_color_gradient2(low = "yellow",mid = "violet",high = "darkblue",midpoint = -1.5,trans="log10")  +
+  theme(axis.title.x = element_blank())
+
+ggsave( gg_SBS/gg_ID/gg_CN/gg_SV + plot_layout(widths = c(1, 4)) , filename = "FigS11A_mutational_signatures_median_dotplots.svg",height = 2.5*4,width=3)
+```
+
+### Statistical tests
+We test for each type of variant whether there are differences in presence/absence patterns and then in proportions in samples where the signature is present, across groups and types
+
+### SBS
+#### presence / absence or burden in present
+SBS1 (age) is never seen in LCNEC, rarer in B and most frequent in A2
+```{r}
+var_cli$type[var_cli$group=="LCNEC"] = "LCNEC"
+sigs.groups.5p = left_join(sigs.groups.5p,tibble(Samples=var_cli$sample_id,type=var_cli$type,age=var_cli$age_cont,sex=var_cli$sex_inferred,groupsimp = var_cli$group))
+
+table(sigs.groups.5p$SBS1>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$SBS1>0,sigs.groups.5p$groupsimp)) # less in LCNEC
+fisher.test(table(sigs.groups.5p$SBS1>0,sigs.groups.5p$groupsimp)[,-4]) # more in A2, less in B, average in A1
+
+table(sigs.groups.5p$SBS1>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$SBS1>0,sigs.groups.5p$type)) # less in LCNEC
+fisher.test(table(sigs.groups.5p$SBS1>0,sigs.groups.5p$type)[,-3]) # less in LCNEC
+```
+
+SBS5 (age) is present in all samples, can't test presence
+```{r}
+table(sigs.groups.5p$SBS5>0,sigs.groups.5p$groupsimp) #everywhere
+```
+
+
+SBS2 and 13 (APOBEC) are in 1 LNET sample and 1 LCNEC only, anecdotal although they are in LCNEC and sc-enriched despite smaller sample sizes and thus lead to a significant test. Interestingly, the LCNEC is from the non-smoker individual.
+```{r}
+table(sigs.groups.5p$SBS2>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$SBS2>0,sigs.groups.5p$groupsimp)) 
+fisher.test(table(sigs.groups.5p$SBS2>0,sigs.groups.5p$groupsimp)[,-4])#
+
+table(sigs.groups.5p$SBS2>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$SBS2>0,sigs.groups.5p$type)) # a bit more in LCNEC
+fisher.test(table(sigs.groups.5p$SBS2>0,sigs.groups.5p$type)[,-3])#borderline more in SC
+
+table(sigs.groups.5p$SBS13>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$SBS13>0,sigs.groups.5p$groupsimp)) # more in LCNEC and AC
+fisher.test(table(sigs.groups.5p$SBS13>0,sigs.groups.5p$groupsimp)[,-4]) #more in SC
+
+table(sigs.groups.5p$SBS13>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$SBS13>0,sigs.groups.5p$type)) # more in LCNEC
+fisher.test(table(sigs.groups.5p$SBS13>0,sigs.groups.5p$type)[,-3]) #more in SC
+
+#Combining both signals, same ass SBS2 because of SBS2 and 13 co-occurence
+table((sigs.groups.5p$SBS2+sigs.groups.5p$SBS13)>0,sigs.groups.5p$groupsimp)
+fisher.test(table((sigs.groups.5p$SBS2+sigs.groups.5p$SBS13)>0,sigs.groups.5p$groupsimp)) # more in LCNEC
+fisher.test(table((sigs.groups.5p$SBS2+sigs.groups.5p$SBS13)>0,sigs.groups.5p$groupsimp)[,-4]) #more in SC
+
+sigs.groups.5p %>% filter(SBS2 + SBS13>0) #sample names with APOBEC signature
+```
+
+SBS4 (smoking), only in LCNEC
+```{r}
+table(sigs.groups.5p$SBS4>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$SBS4>0,sigs.groups.5p$groupsimp)) # only in LCNEC
+
+table(sigs.groups.5p$SBS4>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$SBS4>0,sigs.groups.5p$type)) # only in LCNEC
+```
+SBS18 (ROS), presence is a bit anecdotal, observed once in A1 and SC, borderline significant
+```{r}
+table(sigs.groups.5p$SBS18>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$SBS18>0,sigs.groups.5p$groupsimp)) # never in LCNEC
+fisher.test(table(sigs.groups.5p$SBS18>0,sigs.groups.5p$groupsimp)[,-4]) #once in A1 and SC, borderline signif
+
+table(sigs.groups.5p$SBS18>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$SBS18>0,sigs.groups.5p$type)) # not signif
+fisher.test(table(sigs.groups.5p$SBS18>0,sigs.groups.5p$type)[,-3]) # not signif
+```
+SBS26 (defective DNA mismatch repair), only in 2 samples
+```{r}
+table(sigs.groups.5p$SBS26>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$SBS26>0,sigs.groups.5p$groupsimp)) # never in LCNEC
+fisher.test(table(sigs.groups.5p$SBS26>0,sigs.groups.5p$groupsimp)[,-4]) #only reported in a A2 but not signif
+
+table(sigs.groups.5p$SBS26>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$SBS26>0,sigs.groups.5p$type)) 
+fisher.test(table(sigs.groups.5p$SBS26>0,sigs.groups.5p$type)[,-3])
+```
+
+Other signatures are mostly attributed to unknown putatively endogenous processses or artifacts. Most are only observed in a couple of samples except for SBS8 which shows an interesting pattern of strong of almost universal presence in Ca B. SBS8 presence is also significantly more frequent in Atypical carcinoids, although this seems due to the bias in atypical in Ca B as the association with type is non significant among Ca B, but among atypical the difference between groups stays present.
+```{r}
+table(sigs.groups.5p$SBS8>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$SBS8>0,sigs.groups.5p$groupsimp)) # never in LCNEC
+fisher.test(table(sigs.groups.5p$SBS8>0,sigs.groups.5p$groupsimp)[,-4]) #much more in B
+
+table(sigs.groups.5p$SBS8>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$SBS8>0,sigs.groups.5p$type)) # never in LCNEC
+fisher.test(table(sigs.groups.5p$SBS8>0,sigs.groups.5p$groupsimp)[,-3]) #much more in B
+
+table(sigs.groups.5p$SBS8[sigs.groups.5p$groupsimp=="Ca B"]>0,sigs.groups.5p$type[sigs.groups.5p$groupsimp=="Ca B"])
+fisher.test(table(sigs.groups.5p$SBS8[sigs.groups.5p$groupsimp=="Ca B"]>0,sigs.groups.5p$type[sigs.groups.5p$groupsimp=="Ca B"])) # the samples without it are either carcinoid or typical but association with type within Ca B is non significant
+
+table(sigs.groups.5p$SBS8[sigs.groups.5p$type=="Atypical"]>0,sigs.groups.5p$groupsimp[sigs.groups.5p$type=="Atypical"])
+fisher.test(table(sigs.groups.5p$SBS8[sigs.groups.5p$type=="Atypical"]>0,sigs.groups.5p$groupsimp[sigs.groups.5p$type=="Atypical"])) #even among atypical, the differencess between groups remains
+
+table(sigs.groups.5p$SBS16>0,sigs.groups.5p$groupsimp) # not observed anymore becausse below 5% in all samples where present 
+table(sigs.groups.5p$SBS90>0,sigs.groups.5p$groupsimp) # just in a single sample
+```
+
+#### Differences in burden among samples where present
+We first use linear regression to test for an effect of groups and type, ignoring signatures present in 3 or less samples. We find some differences among groups
+```{r}
+lm1_GTAS = lm(log10(SBS1)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS1!=0))
+lm1_GTA  = lm(log10(SBS1)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS1!=0))
+lm1_GT   = lm(log10(SBS1)~group+type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS1!=0))
+lm1_G    = lm(log10(SBS1)~group,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS1!=0))
+anova(lm1_GTAS) # group, type, and age signif
+anova(lm1_GTAS,lm1_GTA) # not different
+anova(lm1_GTA,lm1_GT) # different
+anova(lm1_GT,lm1_G) # different
+anova(lm1_GTAS,lm1_GTA) # not different => best model is GTA
+summary(lm1_GTAS) 
+summary(lm1_GTA) #group variables not significant, less in Typical, increase with age
+
+lm5_GTAS = lm(log10(SBS5)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS5!=0))
+lm5_GTA  = lm(log10(SBS5)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS5!=0))
+lm5_GT   = lm(log10(SBS5)~group+type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS5!=0))
+lm5_G    = lm(log10(SBS5)~group,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS5!=0))
+anova(lm5_GTAS) # group, type and age signif
+anova(lm5_GTAS,lm5_GTA) # not different
+anova(lm5_GTA,lm5_GT) # different
+anova(lm5_GT,lm5_G) # different
+anova(lm5_GTAS,lm5_GTA) # not different => best model is GTA
+summary(lm5_GTAS) 
+summary(lm5_GTA) #increase with age, less in typical
+
+lm8_GTAS = lm(log10(SBS8)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS8!=0))
+lm8_GTA  = lm(log10(SBS8)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS8!=0))
+lm8_GT   = lm(log10(SBS8)~group+type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS8!=0))
+lm8_GA   = lm(log10(SBS8)~group+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS8!=0))
+lm8_G    = lm(log10(SBS8)~group,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS8!=0))
+anova(lm8_GTAS) # group and age signif
+anova(lm8_GTAS,lm8_GTA) # not different
+anova(lm8_GTA,lm8_GT) # different
+anova(lm8_GA,lm8_G) # different
+anova(lm8_GTAS,lm8_GA) # not different => best model is GA
+summary(lm8_GTAS) 
+summary(lm8_GA) #increase with age
+
+
+bind_rows( summary(lm5_GTAS) %>% tidy() %>% bind_cols(Model="SBS5"),
+           summary(lm8_GTAS) %>% tidy()%>% bind_cols(Model="SBS8"),
+           summary(lm1_GTAS) %>% tidy() %>% bind_cols(Model="SBS1")) %>% mutate(Signif=case_when(p.value<=0.001~"***",
+                                         p.value<=0.01~"**",
+                                         p.value<=0.05~"*",
+                                         p.value<=0.1~".",
+                                         TRUE~"")) %>% relocate(Model,.before=term) %>%  write_tsv("TableS21_SBSlin.tsv")
+
+```
+We plot the results, by group and by type
+```{r}
+sigs.groups.5p$groupsimp = factor(sigs.groups.5p$groupsimp,levels = c("Ca A1","Ca A2","Ca B","sc-enriched","LCNEC"))
+sigs.groups.5p$type = factor(sigs.groups.5p$type,levels = c("Typical","Carcinoid","Atypical","LCNEC"))
+
+ggSBS5 = ggplot(sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS5>0), aes(y=SBS5,x=groupsimp,fill=groupsimp)) + 
+  geom_violin(scale = "width",color=NA,show.legend = F)+ geom_boxplot(fill="white",width=0.1,show.legend = F) + 
+  geom_quasirandom(data = sigs.groups.5p %>% filter(groupsimp %in% c("sc-enriched")),col="white",shape=21,show.legend = F) + 
+  ggpubr::stat_compare_means(method = "anova") + 
+  geom_signif(comparisons = list(c("Ca A1", "Ca A2")), map_signif_level=TRUE,y_position = 4.1,test = "t.test")+
+  geom_signif(comparisons = list(c("Ca A1", "Ca B")), map_signif_level=TRUE,y_position = 4.2,test = "t.test")+
+  geom_signif(comparisons = list(c("Ca A1", "sc-enriched")), map_signif_level=TRUE,y_position = 4.3,test = "t.test")+
+  geom_signif(comparisons = list(c("Ca A2", "Ca B")), map_signif_level=TRUE,y_position = 4.1,test = "t.test")+
+  geom_signif(comparisons = list(c("Ca A2", "sc-enriched")), map_signif_level=TRUE,y_position = 4.4,test = "t.test")+
+  geom_signif(comparisons = list(c("Ca B", "sc-enriched")), map_signif_level=TRUE,y_position = 4.1,test = "t.test")+
+  theme_classic() + scale_fill_manual(values=c(arc4,type5) ) + scale_y_log10()
+
+ggSBS8 = ggplot(sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS8>0), aes(y=SBS8,x=groupsimp,fill=groupsimp)) + 
+  geom_violin(scale = "width",color=NA,show.legend = F)+ geom_boxplot(fill="white",width=0.1,show.legend = F) + 
+  geom_quasirandom(data = sigs.groups.5p %>% filter(groupsimp %in% c("sc-enriched")),col="white",shape=21,show.legend = F) + 
+  ggpubr::stat_compare_means(method = "anova") + 
+  geom_signif(comparisons = list(c("Ca A1", "Ca A2")), map_signif_level=TRUE,y_position = 4.1,test = "t.test")+
+  geom_signif(comparisons = list(c("Ca A1", "Ca B")), map_signif_level=TRUE,y_position = 4.2,test = "t.test")+
+  geom_signif(comparisons = list(c("Ca A1", "sc-enriched")), map_signif_level=TRUE,y_position = 4.3,test = "t.test")+
+  geom_signif(comparisons = list(c("Ca A2", "Ca B")), map_signif_level=TRUE,y_position = 4.1,test = "t.test")+
+  geom_signif(comparisons = list(c("Ca A2", "sc-enriched")), map_signif_level=TRUE,y_position = 4.4,test = "t.test")+
+  geom_signif(comparisons = list(c("Ca B", "sc-enriched")), map_signif_level=TRUE,y_position = 4.1,test = "t.test")+
+  theme_classic() + scale_fill_manual(values=c(arc4,type5) ) + scale_y_log10()
+
+ggSBS1 = ggplot(sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS1>0), aes(y=SBS1,x=groupsimp,fill=groupsimp)) + 
+  geom_violin(scale = "width",color=NA,show.legend = F)+ geom_boxplot(fill="white",width=0.1,show.legend = F) + 
+  geom_quasirandom(data = sigs.groups.5p %>% filter(groupsimp %in% c("sc-enriched")),col="white",shape=21,show.legend = F) + 
+  ggpubr::stat_compare_means(method = "anova") + 
+  geom_signif(comparisons = list(c("Ca A1", "Ca A2")), map_signif_level=TRUE,y_position = 4.1,test = "t.test")+
+  geom_signif(comparisons = list(c("Ca A1", "Ca B")), map_signif_level=TRUE,y_position = 4.2,test = "t.test")+
+  geom_signif(comparisons = list(c("Ca A1", "sc-enriched")), map_signif_level=TRUE,y_position = 4.3,test = "t.test")+
+  geom_signif(comparisons = list(c("Ca A2", "Ca B")), map_signif_level=TRUE,y_position = 4.1,test = "t.test")+
+  geom_signif(comparisons = list(c("Ca A2", "sc-enriched")), map_signif_level=TRUE,y_position = 4.4,test = "t.test")+
+  geom_signif(comparisons = list(c("Ca B", "sc-enriched")), map_signif_level=TRUE,y_position = 4.1,test = "t.test")+
+  theme_classic() + scale_fill_manual(values=c(arc4,type5) ) + scale_y_log10()
+
+## by type
+ggSBS5.ty = ggplot(sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS5>0), aes(y=SBS5,x=type,fill=type)) + 
+  geom_violin(scale = "width",color=NA,show.legend = F)+ geom_boxplot(fill="white",width=0.1,show.legend = F) + 
+  ggpubr::stat_compare_means(method = "anova") + 
+  geom_signif(comparisons = list(c("Typical", "Carcinoid")), map_signif_level=TRUE,y_position = 4.1,test = "t.test")+
+  geom_signif(comparisons = list(c("Typical", "Atypical")), map_signif_level=TRUE,y_position = 4.2,test = "t.test")+
+  geom_signif(comparisons = list(c("Carcinoid", "Atypical")), map_signif_level=TRUE,y_position = 4.1,test = "t.test")+
+  theme_classic() + scale_fill_manual(values=c(arc4,type5) ) + scale_y_log10()
+
+ggSBS8.ty = ggplot(sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS8>0), aes(y=SBS8,x=type,fill=type)) + 
+  geom_violin(scale = "width",color=NA,show.legend = F)+ geom_boxplot(fill="white",width=0.1,show.legend = F) + 
+  ggpubr::stat_compare_means(method = "anova") + 
+  geom_signif(comparisons = list(c("Typical", "Carcinoid")), map_signif_level=TRUE,y_position = 4.1,test = "t.test")+
+  geom_signif(comparisons = list(c("Typical", "Atypical")), map_signif_level=TRUE,y_position = 4.2,test = "t.test")+
+  geom_signif(comparisons = list(c("Carcinoid", "Atypical")), map_signif_level=TRUE,y_position = 4.1,test = "t.test")+
+  theme_classic() + scale_fill_manual(values=c(arc4,type5) ) + scale_y_log10()
+
+ggSBS1.ty = ggplot(sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS1>0), aes(y=SBS1,x=type,fill=type)) + 
+  geom_violin(scale = "width",color=NA,show.legend = F)+ geom_boxplot(fill="white",width=0.1,show.legend = F) + 
+  ggpubr::stat_compare_means(method = "anova") + 
+  geom_signif(comparisons = list(c("Typical", "Carcinoid")), map_signif_level=TRUE,y_position = 4.1,test = "t.test")+
+  geom_signif(comparisons = list(c("Typical", "Atypical")), map_signif_level=TRUE,y_position = 4.2,test = "t.test")+
+  geom_signif(comparisons = list(c("Carcinoid", "Atypical")), map_signif_level=TRUE,y_position = 4.1,test = "t.test")+
+  theme_classic() + scale_fill_manual(values=c(arc4,type5) ) + scale_y_log10()
+
+## by group and type
+ggSBS5.gty = ggplot(sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS5>0), aes(y=SBS5,x=group,fill=type)) + 
+  geom_violin(scale="width",color=NA) + geom_boxplot(position = position_dodge(preserve = "single",width = 0.9),show.legend = F) + 
+  geom_quasirandom(data = sigs.groups.5p %>% filter(groupsimp %in% c("sc-enriched")),col="white",shape=21) + 
+  theme_classic() + scale_fill_manual(values=c(arc4,type5) ) + scale_y_log10()
+
+ggSBS8.gty = ggplot(sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS8>0), aes(y=SBS8,x=group,fill=type)) + 
+  geom_violin(scale="width",color=NA) + geom_boxplot(position = position_dodge(preserve = "single",width = 0.9),show.legend = F) + 
+  geom_quasirandom(data = sigs.groups.5p %>% filter(groupsimp %in% c("sc-enriched")),col="white",shape=21) + 
+  theme_classic() + scale_fill_manual(values=c(arc4,type5) ) + scale_y_log10()
+
+ggSBS1.gty = ggplot(sigs.groups.5p %>% filter(groupsimp!="LCNEC",SBS1>0), aes(y=SBS1,x=group,fill=type)) + 
+  geom_violin(scale="width",color=NA) + geom_boxplot(position = position_dodge(preserve = "single",width = 0.9),show.legend = F) + 
+  geom_quasirandom(data = sigs.groups.5p %>% filter(groupsimp %in% c("sc-enriched")),col="white",shape=21,show.legend = F) + 
+  theme_classic() + scale_fill_manual(values=c(arc4,type5) ) + scale_y_log10()
+
+
+ggSBS5+ggSBS5.ty+ggSBS5.gty  + 
+  ggSBS8+ggSBS8.ty+ggSBS8.gty  + 
+  ggSBS1+ggSBS1.ty + ggSBS1.gty  
+```
+
+### ID
+#### presence / absence or burden in present
+ID1 (Slippage during DNA replication) is less frequent in LCNEC
+```{r}
+table(sigs.groups.5p$ID1>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$ID1>0,sigs.groups.5p$groupsimp)) # less in LCNEC
+fisher.test(table(sigs.groups.5p$ID1>0,sigs.groups.5p$groupsimp)[,-4]) # no effect
+
+table(sigs.groups.5p$ID1>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$ID1>0,sigs.groups.5p$type)) # less in LCNEC
+fisher.test(table(sigs.groups.5p$ID1>0,sigs.groups.5p$type)[,-3]) # no effect
+```
+
+ID2 (Slippage during DNA replication) is more frequent in Ca B, SC, and LCNEC, and in atypical carcinoids
+```{r}
+table(sigs.groups.5p$ID2>0,sigs.groups.5p$groupsimp) #less in A1 and A2
+fisher.test(table(sigs.groups.5p$ID2>0,sigs.groups.5p$groupsimp)) #
+fisher.test(table(sigs.groups.5p$ID2>0,sigs.groups.5p$groupsimp)[,-4]) # no effect
+
+table(sigs.groups.5p$ID2>0,sigs.groups.5p$type) #less in typical 
+fisher.test(table(sigs.groups.5p$ID2>0,sigs.groups.5p$type)) 
+fisher.test(table(sigs.groups.5p$ID2>0,sigs.groups.5p$type)[,-3]) 
+
+table(sigs.groups.5p$ID2[sigs.groups.5p$type=="Atypical"]>0,sigs.groups.5p$groupsimp[sigs.groups.5p$type=="Atypical"]) #never observed in A2 and in half A1 but in almost all B
+table(sigs.groups.5p$ID2[sigs.groups.5p$type=="Carcinoid"]>0,sigs.groups.5p$groupsimp[sigs.groups.5p$type=="Carcinoid"]) #In less than half A1 and A2 but in more than half of B
+table(sigs.groups.5p$ID2[sigs.groups.5p$type=="Typical"]>0,sigs.groups.5p$groupsimp[sigs.groups.5p$type=="Typical"]) #never observed in A2 and rare in A1 but in more than half of B
+fisher.test(table(sigs.groups.5p$ID2[sigs.groups.5p$type=="Atypical"]>0,sigs.groups.5p$groupsimp[sigs.groups.5p$type=="Atypical"])) #not signif
+fisher.test(table(sigs.groups.5p$ID2[sigs.groups.5p$type=="Typical"]>0,sigs.groups.5p$groupsimp[sigs.groups.5p$type=="Typical"])) #signif
+fisher.test(table(sigs.groups.5p$ID2[sigs.groups.5p$type=="Carcinoid"]>0,sigs.groups.5p$groupsimp[sigs.groups.5p$type=="Carcinoid"])) #not signif
+```
+
+ID3 (associated but not exclusive of tobacco smoking), in all LCNEC samples and little bit more frequent in Ca B and SC
+```{r}
+table(sigs.groups.5p$ID3>0,sigs.groups.5p$groupsimp) # rare in A1 and A2, frequent in B and SC, in all LCNEC
+fisher.test(table(sigs.groups.5p$ID3>0,sigs.groups.5p$groupsimp)) # a bit more in LCNEC
+fisher.test(table(sigs.groups.5p$ID3>0,sigs.groups.5p$groupsimp)[,-4])#borderline more in SC
+
+table(sigs.groups.5p$ID3>0,sigs.groups.5p$type) #more frequent in LCNEC and Typical
+fisher.test(table(sigs.groups.5p$ID3>0,sigs.groups.5p$type)) # a bit more in LCNEC
+fisher.test(table(sigs.groups.5p$ID3>0,sigs.groups.5p$type)[,-3])#borderline more in SC
+```
+
+ID5 (age associated) is not asssociated with a particular group or type
+```{r}
+table(sigs.groups.5p$ID5>0,sigs.groups.5p$groupsimp) # seem more frequent in A1
+fisher.test(table(sigs.groups.5p$ID5>0,sigs.groups.5p$groupsimp)) # not signif
+fisher.test(table(sigs.groups.5p$ID5>0,sigs.groups.5p$groupsimp)[,-4]) # not signif
+
+table(sigs.groups.5p$ID5>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$ID5>0,sigs.groups.5p$type)) # not signif
+fisher.test(table(sigs.groups.5p$ID5>0,sigs.groups.5p$type)[,-3]) # not signif
+```
+
+ID8 (age or radiation), not associated with any group or type
+```{r}
+table(sigs.groups.5p$ID8>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$ID8>0,sigs.groups.5p$groupsimp)) # not signif
+fisher.test(table(sigs.groups.5p$ID8>0,sigs.groups.5p$groupsimp)[,-4]) #once in A1 and SC, borderline signif
+
+table(sigs.groups.5p$ID8>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$ID8>0,sigs.groups.5p$type)) # not signif
+fisher.test(table(sigs.groups.5p$ID8>0,sigs.groups.5p$type)[,-3]) # not signif
+```
+
+ID9 (unknown etiology), slightly more frequent in Atypical carcinoids
+```{r}
+table(sigs.groups.5p$ID9>0,sigs.groups.5p$groupsimp) # seem less frequent in A2 and LCNEC
+fisher.test(table(sigs.groups.5p$ID9>0,sigs.groups.5p$groupsimp)) # not signif
+fisher.test(table(sigs.groups.5p$ID9>0,sigs.groups.5p$groupsimp)[,-4]) #only reported in a A2 but not signif
+
+table(sigs.groups.5p$ID9>0,sigs.groups.5p$type) # seem less frequent in LCNEC than in Atypical carcinoids
+fisher.test(table(sigs.groups.5p$ID9>0,sigs.groups.5p$type)) 
+fisher.test(table(sigs.groups.5p$ID9>0,sigs.groups.5p$type)[,-3])
+```
+
+#### Differences in burden among samples where present
+We first use linear regression to test for an effect of groups and type, ignoring signatures present in 3 or less samples. We find some differences among groups
+```{r}
+lm1_GTAS = lm(log10(ID1)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID1!=0)) # 94 samples
+lm1_GTA  = lm(log10(ID1)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID1!=0))
+lm1_GT   = lm(log10(ID1)~group+type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID1!=0))
+lm1_G    = lm(log10(ID1)~group,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID1!=0))
+anova(lm1_GTAS) # group and type signif
+anova(lm1_GTAS,lm1_GTA) # not different
+anova(lm1_GTA,lm1_GT) # not different
+anova(lm1_GT,lm1_G) # different
+anova(lm1_GTAS,lm1_GT) # not different => best model is GT
+summary(lm1_GTAS) 
+summary(lm1_GT) #more in SC, less in typical
+
+lm2_GTAS = lm(log10(ID2)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID2!=0)) # 33 samples
+lm2_GTA  = lm(log10(ID2)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID2!=0))
+lm2_GA   = lm(log10(ID2)~group+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID2!=0))
+lm2_G    = lm(log10(ID2)~group,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID2!=0))
+anova(lm2_GTAS) # group and age signif
+anova(lm2_GTAS,lm2_GTA) # not different
+anova(lm2_GTA,lm2_GA) # not different
+anova(lm2_GA,lm2_G) # not different
+anova(lm2_GTAS,lm2_GA) # not different => best model is GA
+summary(lm2_GTAS) 
+summary(lm2_GA) #less in A2, age not signif
+
+
+lm3_GTAS = lm(log10(ID3)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID3!=0)) # 94 samples
+lm3_GTA  = lm(log10(ID3)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID3!=0))
+lm3_TA   = lm(log10(ID3)~type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID3!=0))
+lm3_T    = lm(log10(ID3)~type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID3!=0))
+lm3_    = lm(log10(ID3)~1,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID3!=0))
+anova(lm3_GTAS) # none signif
+anova(lm3_GTAS,lm3_GTA) # not different
+anova(lm3_GTA,lm3_TA) # not different
+anova(lm3_TA,lm3_T) # not different
+anova(lm3_GTAS,lm3_) # not different => best model is null
+summary(lm3_GTAS) 
+summary(lm3_) #nothing signif
+
+lm5_GTAS = lm(log10(ID5)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID5!=0))
+lm5_GTA  = lm(log10(ID5)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID5!=0))
+lm5_GT   = lm(log10(ID5)~group+type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID5!=0))
+lm5_T    = lm(log10(ID5)~type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID5!=0))
+anova(lm5_GTAS) # type signif
+anova(lm5_GTAS,lm5_GTA) # not different
+anova(lm5_GTA,lm5_GT) # different
+anova(lm5_GT,lm5_T) # not signif
+anova(lm5_GTAS,lm5_T) # not different => best model is T
+summary(lm5_GTAS) 
+summary(lm5_T) #less in typical
+
+lm8_GTAS = lm(log10(ID8)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID8!=0))
+lm8_GTA  = lm(log10(ID8)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID8!=0))
+lm8_GT   = lm(log10(ID8)~group+type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID8!=0))
+lm8_GA   = lm(log10(ID8)~group+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID8!=0))
+lm8_T    = lm(log10(ID8)~type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID8!=0))
+anova(lm8_GTAS) # type signif
+anova(lm8_GTAS,lm8_GTA) # not different
+anova(lm8_GTA,lm8_GT) # not different
+anova(lm8_GT,lm8_T) # not different
+anova(lm8_GTAS,lm8_T) # not different => best model is T
+summary(lm8_GTAS) 
+summary(lm8_T) #less in Typical
+
+lm9_GTAS = lm(log10(ID9)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID9!=0))
+lm9_GTA  = lm(log10(ID9)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID9!=0))
+lm9_GT   = lm(log10(ID9)~group+type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID9!=0))
+lm9_G    = lm(log10(ID9)~group,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",ID9!=0))
+anova(lm9_GTAS) # group signif
+anova(lm9_GTAS,lm9_GTA) # not different
+anova(lm9_GTA,lm9_GT) # not different
+anova(lm9_GT,lm9_G) # not different
+anova(lm9_GTAS,lm9_G) # not different => best model is T
+summary(lm9_GTAS) 
+summary(lm9_G) #more in SC
+
+bind_rows( summary(lm1_GTAS) %>% tidy() %>% bind_cols(Model="ID1"),
+           summary(lm2_GTAS) %>% tidy()%>% bind_cols(Model="ID2"),
+           summary(lm3_GTAS) %>% tidy() %>% bind_cols(Model="ID3"),
+           summary(lm5_GTAS) %>% tidy() %>% bind_cols(Model="ID5"),
+           summary(lm8_GTAS) %>% tidy() %>% bind_cols(Model="ID8"),
+           summary(lm9_GTAS) %>% tidy() %>% bind_cols(Model="ID9")
+           ) %>% mutate(Signif=case_when(p.value<=0.001~"***",
+                                         p.value<=0.01~"**",
+                                         p.value<=0.05~"*",
+                                         p.value<=0.1~".",
+                                         TRUE~"")) %>% relocate(Model,.before=term) %>% write_tsv("TableS21_IDlin.tsv")
+```
+
+### CN
+#### presence / absence or burden in present
+CN1 (diploidy) is less frequent in LCNEC
+```{r}
+table(sigs.groups.5p$CN1>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$CN1>0,sigs.groups.5p$groupsimp)) # less in LCNEC
+fisher.test(table(sigs.groups.5p$CN1>0,sigs.groups.5p$groupsimp)[,-4]) # no effect
+
+table(sigs.groups.5p$CN1>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$CN1>0,sigs.groups.5p$type)) # less in LCNEC
+fisher.test(table(sigs.groups.5p$CN1>0,sigs.groups.5p$type)[,-3]) # no effect
+```
+
+CN2 (tetraploidy) is more frequent in Ca B and SC and least present in A1
+```{r}
+table(sigs.groups.5p$CN2>0,sigs.groups.5p$groupsimp) 
+fisher.test(table(sigs.groups.5p$CN2>0,sigs.groups.5p$groupsimp)) 
+fisher.test(table(sigs.groups.5p$CN2>0,sigs.groups.5p$groupsimp)[,-4]) 
+
+table(sigs.groups.5p$CN2>0,sigs.groups.5p$type) #less in typical 
+fisher.test(table(sigs.groups.5p$CN2>0,sigs.groups.5p$type)) 
+fisher.test(table(sigs.groups.5p$CN2>0,sigs.groups.5p$type)[,-3]) 
+```
+
+CN9 (focal LOH), is more frequent in LCNEC
+```{r}
+table(sigs.groups.5p$CN9>0,sigs.groups.5p$groupsimp) # never in B, frequent in LCNEC
+fisher.test(table(sigs.groups.5p$CN9>0,sigs.groups.5p$groupsimp)) # a bit more in LCNEC
+fisher.test(table(sigs.groups.5p$CN9>0,sigs.groups.5p$groupsimp)[,-4])#borderline more in SC
+
+table(sigs.groups.5p$CN9>0,sigs.groups.5p$type) #more frequent in LCNEC and Typical
+fisher.test(table(sigs.groups.5p$CN9>0,sigs.groups.5p$type)) # a bit more in LCNEC
+fisher.test(table(sigs.groups.5p$CN9>0,sigs.groups.5p$type)[,-3])#borderline more in SC
+```
+
+CN20 (unknown but may be copy number instability after whole-genome doubling) is more frequent in LCNEC
+```{r}
+table(sigs.groups.5p$CN20>0,sigs.groups.5p$groupsimp) # seem more frequent in A1
+fisher.test(table(sigs.groups.5p$CN20>0,sigs.groups.5p$groupsimp)) # not signif
+fisher.test(table(sigs.groups.5p$CN20>0,sigs.groups.5p$groupsimp)[,-4]) # not signif
+
+table(sigs.groups.5p$CN20>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$CN20>0,sigs.groups.5p$type)) # not signif
+fisher.test(table(sigs.groups.5p$CN20>0,sigs.groups.5p$type)[,-3]) # not signif
+```
+
+CN21 (age or radiation), more frequent in LCNEC
+```{r}
+table(sigs.groups.5p$CN21>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$CN21>0,sigs.groups.5p$groupsimp)) # not signif
+fisher.test(table(sigs.groups.5p$CN21>0,sigs.groups.5p$groupsimp)[,-4]) #once in A1 and SC, borderline signif
+
+table(sigs.groups.5p$CN21>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$CN21>0,sigs.groups.5p$type)) # not signif
+fisher.test(table(sigs.groups.5p$CN21>0,sigs.groups.5p$type)[,-3]) # not signif
+```
+#### Differences in burden among samples where present
+We first use linear regression to test for an effect of groups and type, ignoring signatures present in 3 or less samples. We find some differences among groups
+```{r}
+lm1_GTAS = lm(log10(CN1)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",CN1!=0)) # 93 samples
+lm1_GTA  = lm(log10(CN1)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",CN1!=0))
+lm1_GT   = lm(log10(CN1)~group+type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",CN1!=0))
+lm1_G    = lm(log10(CN1)~group,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",CN1!=0))
+anova(lm1_GTAS) # group signif
+anova(lm1_GTAS,lm1_GTA) # not different
+anova(lm1_GTA,lm1_GT) # not different
+anova(lm1_GT,lm1_G) # different
+anova(lm1_GTAS,lm1_G) # not different => best model is G
+summary(lm1_GTAS) 
+summary(lm1_GT) #less in B
+
+lm2_GTAS = lm(log10(CN2)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",CN2!=0)) # 94 samples
+lm2_GTA  = lm(log10(CN2)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",CN2!=0))
+lm2_GA   = lm(log10(CN2)~group+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",CN2!=0))
+lm2_G    = lm(log10(CN2)~group,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",CN2!=0))
+lm2_    = lm(log10(CN2)~1,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",CN2!=0))
+anova(lm2_GTAS) # none signif
+anova(lm2_GTAS,lm2_GTA) # not different
+anova(lm2_GTA,lm2_GA) # not different
+anova(lm2_GA,lm2_G) # not different
+anova(lm2_GTAS,lm2_) # not different => best model is null
+summary(lm2_GTAS)  # less in B?
+summary(lm2_) 
+
+
+lm9_GTAS = lm(log10(CN9)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",CN9!=0)) # not enough samples to fit model (7)
+lm9_GTA  = lm(log10(CN9)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",CN9!=0))
+lm9_TA   = lm(log10(CN9)~type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",CN9!=0))
+lm9_T    = lm(log10(CN9)~type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",CN9!=0))
+lm9_    = lm(log10(CN9)~1,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",CN9!=0))
+anova(lm9_GTA) # none signif
+anova(lm9_GTA,lm9_TA) # not different
+anova(lm9_TA,lm9_T) # not different
+anova(lm9_GTA,lm9_) # not different => best model is null
+summary(lm9_GTA) 
+summary(lm9_) #nothing signif
+
+
+bind_rows( summary(lm1_GTAS) %>% tidy() %>% bind_cols(Model="CN1"),
+           summary(lm2_GTAS) %>% tidy()%>% bind_cols(Model="CN2"),
+           summary(lm9_GTAS) %>% tidy() %>% bind_cols(Model="CN9")) %>% mutate(Signif=case_when(p.value<=0.001~"***",
+                                         p.value<=0.01~"**",
+                                         p.value<=0.05~"*",
+                                         p.value<=0.1~".",
+                                         TRUE~"")) %>% relocate(Model,.before=term) %>%  write_tsv("TableS21_CNlin.tsv")
+```
+
+
+### SV
+#### presence / absence or burden in present
+RefSig2 (non-clustered (simple) translocations) is most frequent in LCNEC and least in Typical
+```{r}
+table(sigs.groups.5p$RefSigR2>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$RefSigR2>0,sigs.groups.5p$groupsimp)) 
+fisher.test(table(sigs.groups.5p$RefSigR2>0,sigs.groups.5p$groupsimp)[,-4])
+
+table(sigs.groups.5p$RefSigR2>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$RefSigR2>0,sigs.groups.5p$type)) 
+fisher.test(table(sigs.groups.5p$RefSigR2>0,sigs.groups.5p$type)[,-3]) 
+```
+RefSig4 (non-clustered (simple) translocations) is most frequent in LCNEC 
+```{r}
+table(sigs.groups.5p$RefSigR4>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$RefSigR4>0,sigs.groups.5p$groupsimp)) 
+fisher.test(table(sigs.groups.5p$RefSigR4>0,sigs.groups.5p$groupsimp)[,-4]) 
+
+table(sigs.groups.5p$RefSigR4>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$RefSigR4>0,sigs.groups.5p$type)) 
+fisher.test(table(sigs.groups.5p$RefSigR4>0,sigs.groups.5p$type)[,-3]) 
+```
+
+RefSigR5 (very short (<1Kb) non-clustered deletions), more frequent in LCNEC
+```{r}
+table(sigs.groups.5p$RefSigR5>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$RefSigR5>0,sigs.groups.5p$groupsimp)) 
+fisher.test(table(sigs.groups.5p$RefSigR5>0,sigs.groups.5p$groupsimp)[,-4]) 
+
+table(sigs.groups.5p$RefSigR5>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$RefSigR5>0,sigs.groups.5p$type)) 
+fisher.test(table(sigs.groups.5p$RefSigR5>0,sigs.groups.5p$type)[,-3]) 
+```
+
+RefSigR6a Very large complex rearrangements, slightly more frequent in atypical carcinoids
+```{r}
+table(sigs.groups.5p$RefSigR6a>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$RefSigR6a>0,sigs.groups.5p$groupsimp))
+fisher.test(table(sigs.groups.5p$RefSigR6a>0,sigs.groups.5p$groupsimp)[,-4]) 
+
+table(sigs.groups.5p$RefSigR6a>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$RefSigR6a>0,sigs.groups.5p$type))
+fisher.test(table(sigs.groups.5p$RefSigR6a>0,sigs.groups.5p$type)[,-3]) 
+```
+
+RefSigR6b medium and large complex rearrangements, more in LCNEC and Atypical carcinoids
+```{r}
+table(sigs.groups.5p$RefSigR6b>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$RefSigR6b>0,sigs.groups.5p$groupsimp)) 
+fisher.test(table(sigs.groups.5p$RefSigR6b>0,sigs.groups.5p$groupsimp)[,-4]) 
+
+table(sigs.groups.5p$RefSigR6b>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$RefSigR6b>0,sigs.groups.5p$type)) 
+fisher.test(table(sigs.groups.5p$RefSigR6b>0,sigs.groups.5p$type)[,-3])
+```
+
+RefSigR11 Non-clustered inversions
+```{r}
+table(sigs.groups.5p$RefSigR11>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$RefSigR11>0,sigs.groups.5p$groupsimp)) 
+fisher.test(table(sigs.groups.5p$RefSigR11>0,sigs.groups.5p$groupsimp)[,-4]) 
+
+table(sigs.groups.5p$RefSigR11>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$RefSigR11>0,sigs.groups.5p$type)) 
+fisher.test(table(sigs.groups.5p$RefSigR11>0,sigs.groups.5p$type)[,-3]) 
+```
+
+RefSigR13 Inversions
+```{r}
+table(sigs.groups.5p$RefSigR13>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$RefSigR13>0,sigs.groups.5p$groupsimp)) 
+fisher.test(table(sigs.groups.5p$RefSigR13>0,sigs.groups.5p$groupsimp)[,-4]) 
+
+table(sigs.groups.5p$RefSigR13>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$RefSigR13>0,sigs.groups.5p$type)) 
+fisher.test(table(sigs.groups.5p$RefSigR13>0,sigs.groups.5p$type)[,-3]) 
+```
+
+RefSigR15 non-clustered deletions and inversions
+```{r}
+table(sigs.groups.5p$RefSigR15>0,sigs.groups.5p$groupsimp)
+fisher.test(table(sigs.groups.5p$RefSigR15>0,sigs.groups.5p$groupsimp)) # less in LCNEC
+fisher.test(table(sigs.groups.5p$RefSigR15>0,sigs.groups.5p$groupsimp)[,-4]) # no effect
+
+table(sigs.groups.5p$RefSigR15>0,sigs.groups.5p$type)
+fisher.test(table(sigs.groups.5p$RefSigR15>0,sigs.groups.5p$type)) # less in LCNEC
+fisher.test(table(sigs.groups.5p$RefSigR15>0,sigs.groups.5p$type)[,-3]) # no effect
+```
+
+#### Differences in burden among samples where present
+We first use linear regression to test for an effect of groups and type, ignoring signatures present in 3 or less samples. We find some differences among groups
+R2 differs between groups and types
+```{r}
+lm2_GTAS = lm(log10(RefSigR2)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR2!=0)) # 85 samples
+lm2_GTA  = lm(log10(RefSigR2)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR2!=0))
+lm2_GT   = lm(log10(RefSigR2)~group+type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR2!=0))
+lm2_G    = lm(log10(RefSigR2)~group,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR2!=0))
+anova(lm2_GTAS) # group, type and age signif
+anova(lm2_GTAS,lm2_GTA) # not different
+anova(lm2_GTA,lm2_GT) # different
+summary(lm2_GTAS) 
+summary(lm2_GTA) #less in A2, B, and Typical, decrease with age at diagnosis
+```
+R4, not much differences, slight signal for less in typical
+```{r}
+lm4_GTAS = lm(log10(RefSigR4)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR4!=0)) # 94 samples
+lm4_GTA  = lm(log10(RefSigR4)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR4!=0))
+lm4_TA   = lm(log10(RefSigR4)~type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR4!=0))
+lm4_T    = lm(log10(RefSigR4)~type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR4!=0))
+anova(lm4_GTAS) # nothing signif, type and age borderline
+anova(lm4_GTAS,lm4_GTA) # not different
+anova(lm4_GTA,lm4_TA) # not different
+anova(lm4_TA,lm4_T) # not different
+summary(lm4_GTAS) 
+summary(lm4_TA) #less typical
+summary(lm4_T) #less typical
+```
+
+R5, not much differences
+```{r}
+lm5_GTAS = lm(log10(RefSigR5)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR5!=0)) # 94 samples
+lm5_GTA  = lm(log10(RefSigR5)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR5!=0))
+lm5_TA   = lm(log10(RefSigR5)~type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR5!=0))
+lm5_T    = lm(log10(RefSigR5)~type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR5!=0))
+anova(lm5_GTAS) # nothing signif, type and age borderline
+anova(lm5_GTAS,lm5_GTA) # not different
+anova(lm5_GTA,lm5_TA) # not different
+anova(lm5_TA,lm5_T) # not different
+summary(lm5_GTAS) 
+summary(lm5_TA) #less typical
+summary(lm5_T) #less typical
+```
+
+R6a, not much differences, slight signal for less in typical
+```{r}
+lm6a_GTAS = lm(log10(RefSigR6a)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR6a!=0)) # 94 samples
+lm6a_GTA  = lm(log10(RefSigR6a)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR6a!=0))
+lm6a_GT   = lm(log10(RefSigR6a)~group+type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR6a!=0))
+lm6a_T    = lm(log10(RefSigR6a)~type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR6a!=0))
+anova(lm6a_GTAS) # type significant, group borderline
+anova(lm6a_GTAS,lm6a_GTA) # not different
+anova(lm6a_GTA,lm6a_GT) # not different
+anova(lm6a_GT,lm6a_T) # not different
+summary(lm6a_GTAS) 
+summary(lm6a_GT) 
+summary(lm6a_T) #less typical
+```
+
+R6b, very few samples, no significant differences but trend of less variants in typical carcinoids consistent with presence/absence tests
+```{r}
+lm6b_GTAS = lm(log10(RefSigR6b)~group+type+age+sex,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR6b!=0)) # 94 samples
+lm6b_GTA  = lm(log10(RefSigR6b)~group+type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR6b!=0))
+lm6b_TA   = lm(log10(RefSigR6b)~type+age,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR6b!=0))
+lm6b_T    = lm(log10(RefSigR6b)~type,data = sigs.groups.5p %>% filter(groupsimp!="LCNEC",RefSigR6b!=0))
+anova(lm6b_GTAS) # nothing signif, type and age borderline
+anova(lm6b_GTAS,lm6b_GTA) # different
+anova(lm6b_GTA,lm6b_TA) # not different
+anova(lm6b_TA,lm6b_T) # not different
+summary(lm6b_GTAS) 
+summary(lm6b_TA) 
+summary(lm6b_T) #trend of less typical
+```
+
+In R11, R13, and R15, too few samples to adjust models. Only keep R2 and R4 for reporting because they have more than 10 samples.
+
+
+We write the results in a table:
+```{r}
+bind_rows( summary(lm2_GTAS) %>% tidy() %>% bind_cols(Model="R2"),
+           summary(lm4_GTAS) %>% tidy()%>% bind_cols(Model="R4")
+           ) %>% mutate(Signif=case_when(p.value<=0.001~"***",
+                                         p.value<=0.01~"**",
+                                         p.value<=0.05~"*",
+                                         p.value<=0.1~".",
+                                         TRUE~"")) %>% relocate(Model,.before=term) %>%  write_tsv("TableS21_SVlin.tsv")
+
+```
+
+## Fig. S11C: Mutations as a function of age
+```{r}
+sigs.groups$small_variant_burden = rowSums(sigs.groups[,3:19])
+sigs.groups$CN_burden = rowSums(sigs.groups[,20:24])
+sigs.groups$SV_burden = rowSums(sigs.groups[,25:32])
+sigs.groups = left_join(sigs.groups,tibble(Samples=var_cli$sample_id,type=var_cli$type,age=var_cli$age_cont,sex=var_cli$sex_inferred,groupsimp = var_cli$group))
+sigs.groups$group = factor(sigs.groups$group, levels = c("Ca A1","Ca A2","Ca B","sc-enriched","LCNEC"))
+sigs.groups$type = factor(sigs.groups$type, levels = c("Typical","Carcinoid","Atypical","LCNEC"))
+```
+
+We compare a few models to find the most appropriate one. We choose a log-transformed model.
+```{r}
+# linear or log model?
+lmAlin  = lm( small_variant_burden ~ age, data=sigs.groups %>% filter(group!="LCNEC")) 
+lmA  = lm( log10(small_variant_burden) ~ age, data=sigs.groups %>% filter(group!="LCNEC")) 
+anova( lmA ) # TMB associated with age
+anova( lmAlin  ) # TMB associated with age
+AIC(lmA)
+AIC(lmAlin) # lesser R2 and AIC in log model
+
+# intercept or not?
+lmA0  = lm( log10(small_variant_burden) ~ age-1, data=sigs.groups %>% filter(group!="LCNEC")) 
+anova( lmA0  )
+anova(lmA0,lmA)
+AIC(lmA0) # more, keep intercept
+
+#find appropriate variables
+lmAT  = lm( log10(small_variant_burden) ~ age+type, data=sigs.groups %>% filter(group!="LCNEC")) 
+lmAG  = lm( log10(small_variant_burden) ~ age+group, data=sigs.groups %>% filter(group!="LCNEC")) 
+lmAGT = lm( log10(small_variant_burden) ~ age+type+group, data=sigs.groups %>% filter(group!="LCNEC"))
+lmAGTS = lm( log10(small_variant_burden) ~ age+type+group+sex, data=sigs.groups %>% filter(group!="LCNEC"))
+
+anova( lmAG  ) # all signif
+anova( lmAGT  ) # all signif
+anova( lmAGTS  ) # sex not signif
+anova(lmAG,lmAGT) # signif, keep type
+anova(lmAT,lmAGT) # signif, keep group
+anova(lmAGT,lmAGTS) # no difference, do not keep sex
+
+# interaction or nestedness?
+lmATi  = lm( log10(small_variant_burden) ~ age*type, data=sigs.groups %>% filter(group!="LCNEC")) 
+lmAGi  = lm( log10(small_variant_burden) ~ age*group, data=sigs.groups %>% filter(group!="LCNEC")) 
+lmAGTi = lm( log10(small_variant_burden) ~ age+group*type, data=sigs.groups %>% filter(group!="LCNEC"))
+lmAGTn = lm( log10(small_variant_burden) ~ age+group/type, data=sigs.groups %>% filter(group!="LCNEC"))
+lmAGTn2 = lm( log10(small_variant_burden) ~ age+group%in%type, data=sigs.groups %>% filter(group!="LCNEC"))
+
+anova(lmATi) # no interaction
+anova(lmAGi) # no interaction
+anova(lmAGTi) # interaction not signif
+anova(lmAGTn) # type signif among groups
+anova(lmAGTn2) # type signif among groups
+anova(lmAT,lmATi)
+anova(lmAGT,lmAGTi) # no improvement from interaction group by type
+anova(lmAGT,lmAGTn) # no improvement from nestedness
+AIC(lmAGT) #lowest AIC
+AIC(lmAGTi)
+AIC(lmAGTn) 
+AIC(lmAGTn2) 
+
+# parameter estimates from best models
+summary(lmAGTS) # increase with age, lower in Typical
+```
+
+Plots:
+```{r}
+ggSMB = ggplot(sigs.groups %>% filter(group!="LCNEC"), aes(y=small_variant_burden,x=age)) + 
+  geom_point(mapping = aes(fill=group),color="white",show.legend = F,shape=21)+ 
+  geom_smooth(aes(col=type),method = "lm",se = F)+
+  ggpubr::stat_regline_equation(mapping = aes(label =  paste(..eq.label.., ..rr.label.., sep = "~~~~")), data = sigs.groups %>% filter(group!="LCNEC")) +
+  theme_classic() + scale_color_manual(values=c(arc4,type5) ) + scale_fill_manual(values=c(arc4,type5) )  + xlab("Age at diagnosis")+ scale_y_log10()  #+ facet_wrap(.~groupsimp)
+
+ggSMB
+
+ggsave(ggSMB , filename="FigS10C_burden.svg",height=2.5,width=3.8)
+```
+
+Same with CNVs and SVs. We add 1 to the SV burden to stay within the permissible range of the logarithm function. We write the results in a file
+```{r}
+lmAGTS_CNV = lm( log10(CN_burden) ~ group+type+age+sex, data=sigs.groups %>% filter(group!="LCNEC"))
+lmAGTS_SV = lm( log10(SV_burden+1) ~ group+type+age+sex, data=sigs.groups %>% filter(group!="LCNEC"))
+
+anova(lmAGTS_CNV)
+anova(lmAGTS_SV) # type and group are significant
+
+summary(lmAGTS_CNV)
+summary(lmAGTS_SV)
+
+bind_rows( summary(lmAGTS) %>% tidy() %>% bind_cols(Model="small variants"),
+           summary(lmAGTS_CNV) %>% tidy() %>% bind_cols(Model="CNV"),
+           summary(lmAGTS_SV) %>% tidy()%>% bind_cols(Model="SV") ) %>% mutate(Signif=case_when(p.value<=0.001~"***",
+                                         p.value<=0.01~"**",
+                                         p.value<=0.05~"*",
+                                         p.value<=0.1~".",
+                                         TRUE~"")) %>% relocate(Model,.before=term) %>%  write_tsv("TableS21_burdens_lin.tsv")
+
+```
+
+## Extended data figure E: Drivers - per signatures
+
+```{r}
+MutProbs = read_tsv("/data/lungNENomics/work/alcalan/WGS/small_variants/somatic/release2_intersectmnps_15042023/mutational_signatures/lungNENomics/SBS96/Suggested_Solution/COSMIC_SBS96_Decomposed_Solution/Activities/De_Novo_MutationType_Probabilities.txt")
+Signatures = read_tsv("/data/lungNENomics/work/alcalan/WGS/small_variants/somatic/release2_intersectmnps_15042023/mutational_signatures/lungNENomics/SBS96/Suggested_Solution/COSMIC_SBS96_Decomposed_Solution/Signatures/COSMIC_SBS96_Signatures.txt")
+
+SignaturesID = read_tsv("/data/lungNENomics/work/alcalan/WGS/small_variants/somatic/release2_intersectmnps_15042023/mutational_signatures/lungNENomics/ID83/Suggested_Solution/COSMIC_ID83_Decomposed_Solution/Signatures/COSMIC_ID83_Signatures.txt")
+
+snv_drivers_filename = load("/data/lungNENomics/work/Descriptive_manuscript_data/WGS_data/dataset_snv_dmg_lungNENomicsCombined.RData")
+drivergenes = read_tsv("/data/lungNENomics/work/Descriptive_manuscript_data/WGS_data/drivers_final.tsv") %>% filter(!SYMBOL%in%c("MUC16","FAM47C","FAT4")) # we remove the 3 genes that did not pass the expression filter
+
+snv_drivers = dataset_SNV_dmg %>% filter(Gene.refGene %in% drivergenes$SYMBOL)
+
+#colnames(snv_drivers)[c(3:4,6:7)]=c("chr","pos","ref","alt")
+#snv_drivers.SBS = snv_drivers %>% filter( ref!="-",alt!="-")
+#snv_drivers.SBS$pos = as.numeric(snv_drivers.SBS$pos)
+#snv_drivers.SBS = GenomeTrackSig:::getTrinuc(snv_drivers.SBS,BSgenome.Hsapiens.UCSC.hg38::BSgenome.Hsapiens.UCSC.hg38)
+#snv_drivers.SBS$MutationType = paste0(substr(snv_drivers.SBS$mutType,1,1),"[",substr(snv_drivers.SBS$mutType,2,2),">",
+#                                      snv_drivers.SBS$alt,"]",substr(snv_drivers.SBS$mutType,3,3) )
+
+#snv_drivers.ID = snv_drivers %>% filter( ref=="-" | alt=="-")
+#snv_drivers.ID$pos = as.numeric(snv_drivers.ID$pos)
+
+library(SigProfilerMatrixGeneratorR)
+library(reticulate)
+use_python("/home/alcalan/miniforge3/bin/python") # put path to python with SigProfilerMatrixGenerator installed
+py_config()
+install('GRCh38', rsync=FALSE, bash=TRUE)
+
+# write in correct format
+snv_drivers.formatted = snv_drivers %>% mutate(Project="lungNENomics_drivers",ID=".",Genome="GRCh38") %>% 
+  rename(Sample="sample_id",mut_type="Variant_Type",chrom="Chromosome",pos_start="Start_Position",pos_end="End_Position",
+         ref="Reference_Allele",alt="Tumor_Seq_Allele2") %>%  dplyr::select(Project,Sample,ID,Genome,mut_type,chrom,pos_start,pos_end,ref,alt) %>% mutate(Type="SOMATIC")
+## make all sample names unique, so we get one driver per output column
+snv_drivers.formatted$Sample = paste(snv_drivers.formatted$Sample,1:nrow(snv_drivers.formatted),sep="_")
+
+dir.create("snv_drivers4SP")
+write_tsv(file = "snv_drivers4SP/snv_drivers.formatted.txt",snv_drivers.formatted)
+
+matrices <- SigProfilerMatrixGeneratorR("drivers", "GRCh38", "snv_drivers4SP/", plot=T, exome=F, bed_file=NULL, chrom_based=F,
+                                        tsb_stat=FALSE, seqInfo=FALSE, cushion=100)
+
+
+#snv_drivers.ID$MutationType = paste0(substr(snv_drivers.ID$mutType,1,1),"[",substr(snv_drivers.ID$mutType,2,2),">",
+#                                      snv_drivers.ID$alt,"]",substr(snv_drivers.ID$mutType,3,3) )
+
+
+Probs.all = c() # compute probability that the mutation came from one of the signatures, taking into account its activity in the sample and the number of mutations of the same type generated by each signature
+for(i in 1:ncol(matrices[[4]])){ #for each driver
+  if(sum( matrices[[4]][,i] )==1){# SBS
+    SBS.spectrum = sigs.groups.5p[,1:13]%>% filter(Samples==  str_remove(colnames(matrices[[4]])[i],"_[0-9]+$") ) #get signature attribution of sample
+    SBS.spectrum[,3:13] = SBS.spectrum[,3:13]/sum(SBS.spectrum[,3:13]) # transform to relative attribution
+    Probs = SBS.spectrum[,-(1:2)]*(Signatures %>% filter(MutationType==rownames(matrices[[4]])[matrices[[4]][,i]>0]))[,-1] #find expected number of mutations of the type of the driver given the relative attributions of the sample and the profile of the signatures
+    Probs = Probs/sum(Probs) # normalize to 1 to transform into a prob
+    Probs.all = bind_rows(Probs.all,Probs) # add to list
+  }else{#ID
+    ID.spectrum = sigs.groups.5p[,c(1:2,14:19)]%>% filter(Samples==  str_remove(colnames(matrices[[4]])[i],"_[0-9]+$") ) #get signature attribution of sample
+    ID.spectrum[,3:8] = ID.spectrum[,3:8]/sum(ID.spectrum[,3:8]) # transform to relative attribution
+    Probs = ID.spectrum[,-(1:2)]*(SignaturesID %>% filter(MutationType==rownames(matrices$ID)[matrices$ID[,i]>0]))[,-1] #find expected number of mutations of the type of the driver given the relative attributions of the sample and the profile of the signatures
+    Probs = Probs/sum(Probs) # normalize to 1 to transform into a prob
+    Probs.all = bind_rows(Probs.all,Probs) # add to list
+    }
+}
+
+# check that driver IDs correspond
+all( colnames(matrices[[4]])==colnames(matrices$ID) )
+snv_drivers2 = Probs.all
+snv_drivers2[is.na(snv_drivers2)] = 0
+snv_drivers2$sample_id = str_remove(colnames(matrices[[4]]),"_[0-9]+$")
+snv_drivers2$driver_id = as.numeric(str_remove(str_extract(colnames(matrices[[4]]),"_[0-9]+$"),"_"))
+snv_drivers2 = snv_drivers2 %>% arrange(driver_id)
+snv_drivers2 = left_join( bind_cols(snv_drivers2,snv_drivers.formatted ), var_cli %>% dplyr::select(sample_id,group,age_cat,sex_inferred,type))
+snv_drivers2.long = snv_drivers2 %>% pivot_longer(cols = ID1:SBS90,names_to = "Signature",values_to = "TMB")
+# normalize by sample size for each group
+snv_drivers2.long$TMB[snv_drivers2.long$group=="Ca A1"] =snv_drivers2.long$TMB[snv_drivers2.long$group=="Ca A1"]/44 
+snv_drivers2.long$TMB[snv_drivers2.long$group=="Ca A2"] =snv_drivers2.long$TMB[snv_drivers2.long$group=="Ca A2"]/29 
+snv_drivers2.long$TMB[snv_drivers2.long$group=="Ca B"] =snv_drivers2.long$TMB[snv_drivers2.long$group=="Ca B"]/24 
+snv_drivers2.long$TMB[snv_drivers2.long$group=="sc-enriched"] =snv_drivers2.long$TMB[snv_drivers2.long$group=="sc-enriched"]/5
+
+snv_drivers3.long = snv_drivers2.long %>% group_by(group,Signature) %>% summarize(TMB=sum(TMB)) # compute total
+snv_drivers3.long$Signature = factor(snv_drivers3.long$Signature,levels = c(names(IDcols),names(SBScols)) )
+
+EDFig2e = ggplot( snv_drivers3.long , aes(x=group,y=TMB,fill=Signature)) + 
+  geom_bar(stat="identity") + theme_classic() + ylim(c(0,2.2)) + scale_fill_manual(values=c(SBScols,IDcols) ) +
+  geom_hline(yintercept = 1,linetype="dashed")+
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,colour =arc4[(c("Ca A1","Ca A2","Ca B","sc-enriched"))] ) ) +
+  xlab("") + ylab("Mean number of drivers per tumor") 
+
+EDFig2e
+
+ggsave(EDFig2e,filename = "EDFig2e_drivers_mutsig.svg",height = 2.5,width=3)
+
+# are some genes more often created by given sig? nope
+summary( glm(snv_drivers$Gene.refGene=="MEN1"~snv_drivers2$SBS1,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="MEN1"~snv_drivers2$SBS5,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="MEN1"~snv_drivers2$SBS8,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="MEN1"~snv_drivers2$ID1,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="MEN1"~snv_drivers2$ID3,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="MEN1"~snv_drivers2$ID8,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="MEN1"~snv_drivers2$ID9,family = binomial(link='logit')) )
+
+summary( glm(snv_drivers$Gene.refGene=="EIF1AX"~snv_drivers2$SBS1,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="EIF1AX"~snv_drivers2$SBS5,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="EIF1AX"~snv_drivers2$SBS8,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="EIF1AX"~snv_drivers2$ID1,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="EIF1AX"~snv_drivers2$ID3,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="EIF1AX"~snv_drivers2$ID8,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="EIF1AX"~snv_drivers2$ID9,family = binomial(link='logit')) )
+
+summary( glm(snv_drivers$Gene.refGene=="ATM"~snv_drivers2$SBS1,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="ATM"~snv_drivers2$SBS5,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="ATM"~snv_drivers2$SBS8,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="ATM"~snv_drivers2$ID1,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="ATM"~snv_drivers2$ID3,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="ATM"~snv_drivers2$ID8,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="ATM"~snv_drivers2$ID9,family = binomial(link='logit')) )
+
+summary( glm(snv_drivers$Gene.refGene=="BRAF"~snv_drivers2$SBS1,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="BRAF"~snv_drivers2$SBS5,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="BRAF"~snv_drivers2$SBS8,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="BRAF"~snv_drivers2$ID1,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="BRAF"~snv_drivers2$ID3,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="BRAF"~snv_drivers2$ID8,family = binomial(link='logit')) )
+summary( glm(snv_drivers$Gene.refGene=="BRAF"~snv_drivers2$ID9,family = binomial(link='logit')) )
+```
+
+# Fig. S10B: Relative signature attributions
+
+We first plot relative proportions per molecular group and per type of alteration (Fig. S10B)
+```{r}
+SBS.5p.prop = sigs.groups.5p[,-c(which(colSums(sigs.groups.5p[,3:32])==0)+2)][,c(1:2,3:12)] #10 signatures, 111 samples
+SBS.5p.prop[,-c(1:2)] = sweep(SBS.5p.prop[,-c(1:2)],1,rowSums(SBS.5p.prop[,-c(1:2)]),"/")
+SBS.5p.prop[,-c(1:2)][is.na(SBS.5p.prop[,-c(1:2)])] = 0
+## arrange by hand
+SBS.5p.prop.long = SBS.5p.prop %>% filter(rowSums(SBS.5p.prop[,-c(1,2)])>0) %>% pivot_longer(-c(Samples,group))
+sigorder = SBS.5p.prop.long %>% group_by(name) %>% summarize(meanact=mean(value)) %>% arrange(-meanact) %>% pull(name)
+sampleorder = SBS.5p.prop %>% arrange(!!!rlang::syms(sigorder)) %>% pull(Samples) %>% rev()
+SBS.5p.prop.long = SBS.5p.prop.long %>% mutate(Samples=factor(Samples,levels=sampleorder),name=factor(name,levels=sigorder))
+
+gg_SBS_samples = ggplot(SBS.5p.prop.long ,aes(x=Samples,y=value,fill = name)) + geom_bar(stat = "identity")+ 
+  facet_grid(.~group,scales = "free_x")+ theme_classic()+ coord_cartesian(expand = F) +
+  theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank())+
+  scale_fill_brewer(palette = "Paired") + scale_color_brewer(palette = "Paired") 
+
+## IDs 
+ID.5p.prop = sigs.groups.5p[,-c(which(colSums(sigs.groups.5p[,3:32])==0)+2)][,c(1:2,13:18)]  #6 signatures
+ID.5p.prop[,-c(1:2)] = sweep(ID.5p.prop[,-c(1:2)],1,rowSums(ID.5p.prop[,-c(1:2)]),"/")
+ID.5p.prop[,-c(1:2)][is.na(ID.5p.prop[,-c(1:2)])] = 0
+## arrange by hand
+ID.5p.prop.long = ID.5p.prop %>% filter(rowSums(ID.5p.prop[,-c(1,2)])>0) %>% pivot_longer(-c(Samples,group))
+sigorder = ID.5p.prop.long %>% group_by(name) %>% summarize(meanact=mean(value)) %>% arrange(-meanact) %>% pull(name)
+sampleorder = ID.5p.prop %>% arrange(!!!rlang::syms(sigorder)) %>% pull(Samples) %>% rev()
+ID.5p.prop.long = ID.5p.prop.long %>% mutate(Samples=factor(Samples,levels=sampleorder),name=factor(name,levels=sigorder))
+
+gg_ID_samples = ggplot(ID.5p.prop.long ,aes(x=Samples,y=value,fill = name)) + geom_bar(stat = "identity")+ 
+  facet_grid(.~group,scales = "free_x")+ theme_classic()+ coord_cartesian(expand = F) +
+  theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank())+
+  scale_fill_brewer(palette = "Paired") + scale_color_brewer(palette = "Paired") 
+
+## CNs
+CN.5p.prop = sigs.groups.5p[,-c(which(colSums(sigs.groups.5p[,3:32])==0)+2)][,c(1:2,19:23)] #5 signatures
+CN.5p.prop[,-c(1:2)] = sweep(CN.5p.prop[,-c(1:2)],1,rowSums(CN.5p.prop[,-c(1:2)]),"/")
+CN.5p.prop[,-c(1:2)][is.na(CN.5p.prop[,-c(1:2)])] = 0
+## arrange by hand
+CN.5p.prop.long = CN.5p.prop %>% filter(rowSums(CN.5p.prop[,-c(1,2)])>0) %>% pivot_longer(-c(Samples,group))
+sigorder = CN.5p.prop.long %>% group_by(name) %>% summarize(meanact=mean(value)) %>% arrange(-meanact) %>% pull(name)
+sampleorder = CN.5p.prop %>% arrange(!!!rlang::syms(sigorder)) %>% pull(Samples) %>% rev()
+CN.5p.prop.long = CN.5p.prop.long %>% mutate(Samples=factor(Samples,levels=sampleorder),name=factor(name,levels=sigorder))
+
+gg_CN_samples = ggplot(CN.5p.prop.long ,aes(x=Samples,y=value,fill = name)) + geom_bar(stat = "identity")+ 
+  facet_grid(.~group,scales = "free_x")+ theme_classic()+ coord_cartesian(expand = F) +
+  theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank())+
+  scale_fill_brewer(palette = "Paired") + scale_color_brewer(palette = "Paired") 
+
+## SVs
+SV.5p.prop = sigs.groups.5p[,-c(which(colSums(sigs.groups.5p[,3:32])==0)+2)][,c(1:2,24:31)] #8 signatures
+SV.5p.prop[,-c(1:2)] = sweep(SV.5p.prop[,-c(1:2)],1,rowSums(SV.5p.prop[,-c(1:2)]),"/")
+SV.5p.prop[,-c(1:2)][is.na(SV.5p.prop[,-c(1:2)])] = 0
+## arrange by hand
+SV.5p.prop.long = SV.5p.prop %>% filter(rowSums(SV.5p.prop[,-c(1,2)])>0) %>% pivot_longer(-c(Samples,group))
+sigorder = SV.5p.prop.long %>% group_by(name) %>% summarize(meanact=mean(value)) %>% arrange(-meanact) %>% pull(name)
+sampleorder = SV.5p.prop %>% arrange(!!!rlang::syms(sigorder)) %>% pull(Samples) %>% rev()
+SV.5p.prop.long = SV.5p.prop.long %>% mutate(Samples=factor(Samples,levels=sampleorder),name=factor(name,levels=sigorder))
+
+gg_SV_samples = ggplot(SV.5p.prop.long ,aes(x=Samples,y=value,fill = name)) + geom_bar(stat = "identity")+ 
+  facet_grid(.~group,scales = "free_x")+ theme_classic()+ coord_cartesian(expand = F) +
+  theme(axis.text.x = element_blank(),axis.ticks.x = element_blank())+
+  scale_fill_brewer(palette = "Paired") + scale_color_brewer(palette = "Paired") 
+
+## global 
+global.5p.prop = sigs.groups.5p[,-c(which(colSums(sigs.groups.5p[,3:32])==0)+2)][,c(1:2,3:31)] #29 signatures
+global.5p.prop[,-c(1:2)] = sweep(global.5p.prop[,-c(1:2)],1,rowSums(global.5p.prop[,-c(1:2)]),"/")
+global.5p.prop[,-c(1:2)][is.na(global.5p.prop[,-c(1:2)])] = 0
+## arrange by hand
+global.5p.prop.long = global.5p.prop %>% filter(rowSums(global.5p.prop[,-c(1,2)])>0) %>% pivot_longer(-c(Samples,group))
+sigorder = global.5p.prop.long %>% group_by(name) %>% summarize(meanact=mean(value)) %>% arrange(-meanact) %>% pull(name)
+sampleorder = global.5p.prop %>% arrange(!!!rlang::syms(sigorder)) %>% pull(Samples) %>% rev()
+global.5p.prop.long = global.5p.prop.long %>% mutate(Samples=factor(Samples,levels=sampleorder),name=factor(name,levels=sigorder))
+
+cols_allsigs = rep(NA,ncol(global.5p.prop)-1)
+names(cols_allsigs) = colnames(sigs.groups.5p)[3:32]
+cols_allsigs[1:11] = RColorBrewer::brewer.pal(11,"BrBG")
+cols_allsigs[12:17] = RColorBrewer::brewer.pal(6,"Greens")
+cols_allsigs[18:22] = RColorBrewer::brewer.pal(5,"Purples")
+cols_allsigs[23:30] = RColorBrewer::brewer.pal(8,"Blues")
+
+gg_global_samples = ggplot(global.5p.prop.long ,aes(x=Samples,y=value,fill = name)) + geom_bar(stat = "identity")+ 
+  facet_grid(.~group,scales = "free_x")+ theme_classic()+ coord_cartesian(expand = F) +
+  theme(axis.text.x = element_blank(),axis.ticks.x = element_blank())+
+  scale_fill_manual(values = cols_allsigs) 
+gg_global_samples
+```
+
+```{r}
+ggsave( gg_SBS_samples +gg_ID_samples +gg_CN_samples +gg_SV_samples  + gg_global_samples + plot_layout(widths = c(1, 4)) , 
+        filename = "FigS10B_mutational_signatures_relative_samples.svg",height = 2.5*4,width=2.5*5)
+```
+
+# Fig. S10D: Signature variability analysis
+We compute the diversity (function het from package sigvar) of mutations within each sample
+```{r}
+global.5p.prop4boot = global.5p.prop %>% mutate(group=as.character(group)) %>% bind_cols()
+global.5p.prop4boot$group[str_detect(global.5p.prop4boot$group,"LCNEC")] = "LCNEC"
+global.5p.prop4boot = global.5p.prop4boot %>% mutate(group=factor(group,levels=c("Ca A1","Ca A2","Ca B","sc-enriched","LCNEC")))
+
+global.5p.prop4boot$Diversity = apply(global.5p.prop4boot[,-(1:2)],1,het)
+global.5p.prop4boot = left_join(global.5p.prop4boot, sigs.groups[,-c(2,3:32)])
+
+ggSVA = ggplot( global.5p.prop4boot, aes(y=Diversity,x=group,fill=group)) + 
+  geom_violin(col=NA) + geom_boxplot(width=0.1,fill="white") + scale_fill_manual(values=arc4) + theme_classic() + 
+  stat_compare_means(comparisons = list(c("Ca A1","Ca A2"),
+                                        c("Ca A1","Ca B"),
+                                        c("Ca A1","sc-enriched"),
+                                        c("Ca A1","LCNEC"),
+                                        c("Ca A2","Ca B"),
+                                        c("Ca A2","sc-enriched"),
+                                        c("Ca A2","LCNEC"),
+                                        c("Ca B","sc-enriched"),
+                                        c("Ca B","LCNEC"),
+                                        c("sc-enriched","LCNEC")),method = "t.test") +
+  ylab("Within-sample\ndiversity") + theme(axis.title.x = element_blank(),axis.text.x = element_text(angle=90,hjust = 1,vjust = 0.5)) + guides(fill="none")
+
+ggSVAty = ggplot( global.5p.prop4boot, aes(y=Diversity,x=type,fill=type)) + 
+  geom_violin(col=NA) + geom_boxplot(width=0.1,fill="white") + scale_fill_manual(values=type5) + theme_classic() + 
+  stat_compare_means(comparisons = list(c("Typical","Carcinoid"),
+                                        c("Typical","Atypical"),
+                                        c("Typical","LCNEC"),
+                                        c("Carcinoid","Atypical"),
+                                        c("Carcinoid","LCNEC"),
+                                        c("Atypical","LCNEC") ),method = "t.test") +
+  ylab("Within-sample\ndiversity") + theme(axis.title.x = element_blank(),axis.text.x = element_text(angle=90,hjust = 1,vjust = 0.5)) + guides(fill="none")
+
+
+ggSVA + ggSVAty
+
+write_csv(left_join(sigs.groups.5p, global.5p.prop4boot[,c(1,32)]), file="TableS21_signatures.csv")
+```
