@@ -1,0 +1,761 @@
+---
+title: "Fig3DE_SupFigs"
+author: "E. Mathian and N. Alcala"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Figure 3DE and associated supplementary figures: Whole-slide images deep learning analyses
+
+This document produces Figure 3 from the lungNENomics manuscript, describing the results of Deep-learning analyses of whole-slide images.
+
+## Load libraries
+
+```{r libs, echo=FALSE}
+library(tidyverse)
+library(ggpubr)
+library(RColorBrewer)
+library(readxl)
+library(ggbeeswarm)
+```
+
+```{r}
+#setwd("/data/lungNENomics/work/MathianE/pathreview2024/R_Script")
+#dir.create("../FiguresStatsPathReview")
+```
+
+## Define colors
+```{r}
+source("/data/lungNENomics/work/Descriptive_manuscript_data/Colour_palettes.R")
+yes_no_pal <- c("Yes"="#B2DF8A", "No"="#FB9A99" , "Maybe"="#A6CEE3")
+true_false_pal <- c("TRUE"="#B2DF8A", "FALSE"="#FB9A99" )
+t_cells_size <- c("Unusually small"="#33A02C", "Unusually large"="#E31A1C" , "Medium"="#1F78B4", "NA_T_cells_size"= "#CCCCCC")
+nc_ratio_pal <- c("Unusually low"="#33A02C", "Unusually high"="#E31A1C" , "Medium"="#1F78B4", "NA_NC_ratio"= "#CCCCCC")
+#"#A6CEE3" "#1F78B4" "#B2DF8A" "#33A02C" "#FB9A99" "#E31A1C" "#FDBF6F" "#FF7F00" "#CAB2D6" "#6A3D9A" "#FFFF99" "#B15928"
+```
+
+## import data
+
+We import the list of tiles, their annotation (global and tile-by-tile) and their molecular group assignments, and format the data for downstream analyses:
+```{r}
+Gannot.pre = read_xlsx("../../Data/Supplementary_Table_S41.xlsx",skip=1) %>% mutate(partition=as.numeric(str_extract(partition_id,"[0-9]+$"))) #globally annotated partitions (i.e., all tiles are very similar)
+
+## internal code to prepare the data, not needed for running the script ##
+#load("/data/lungNENomics/work/Descriptive_manuscript_data/Images/Deep_learning_Alexandra/Supervised_Molecular_groups/partition_df_filter2.RData") # list of all tiles in the global partitions
+#Gextracted_tiles = read_csv("/data/lungNENomics/work/MathianE/LNEN_LCNEC_Molecular_barlow_twin/leinden_highest_attn_bt_proj/FiguresOverviewPerfRoformerLeiden_K250_res2_run3/TilesExtractionRandom50Tiles/ExtractedTiles.csv") # list of tiles actually reviewed by pathologists
+#Gextracted_tiles$TilesExtracted[which( !Gextracted_tiles$TilesExtracted %in% partition_df_filter2$img_id_c )] # check that they are all here 
+#partition_df_filter2 = partition_df_filter2 %>% dplyr::select(partition,img_id_c,manuscript_id,TNEID,archtype_label_combined,attn_scores_ch0,attn_scores_ch1,attn_scores_ch2) %>% filter(img_id_c %in% Gextracted_tiles$TilesExtracted)
+#partition_df_filter2 = partition_df_filter2 %>% filter(partition %in% unique(Gannot.pre$partition))
+#write_tsv( partition_df_filter2  , file = "../../Data/Deep_learning_global_partition_tiles.tsv" ) # write results in table
+####
+load("/data/lungNENomics/work/Descriptive_manuscript_data/Images/Deep_learning_Alexandra/Supervised_Molecular_groups/partition_df_filter2.RData")
+
+partition_df_filter = read_tsv(  file = "../../Data/Deep_learning_global_partition_tiles.tsv" )
+
+# we join the two
+Gannot = left_join(partition_df_filter ,Gannot.pre,by=c("partition")) %>% 
+  dplyr::rename("patient_id"=TNEID, "erythrocyte"=erythrocytes , "endothelial cell"="endothelial cells" , 
+                "ciliated cell"="ciliated cells", "cartilage / chondrocyte"="cartilage", "goblet cell"="gobelet cells", 
+                "spindle"="spindle cells","pyknotic"= "pyknotic cells","plasmocytoid"="plasmocytoid cells","polygonal"="polygonal cells",
+                "macrophage"="macrophages","lymphocyte"=lymphocytes,
+                "n:c ratio"="NC ratio","necrosis"="foci of necrosis","tissue architecture"="tissue architecture corrected","tumour cells size"="tumor cells size","reader"="group")
+
+TBTannot = read_xlsx("../../Data/Supplementary_Table_S42.xlsx",skip=1)
+
+## internal code to prepare data 
+#IDmatch = read_csv("/data/lungNENomics/work/MathianE/LNEN_LCNEC_Molecular_barlow_twin/KEY_FILE_tneid_manuscript_id_match.csv")
+#all( TBTannot$patient_id %in% IDmatch$TNEID ) # check that all samples are here
+#write_tsv( IDmatch %>% filter(TNEID %in% TBTannot$patient_id ) %>% dplyr::select(TNEID,manuscript_id,archtype_label_combined), file =  "../../Data/Deep_learning_TNEID_sample_id_match.tsv")
+
+IDmatch = read_tsv("../../Data/Deep_learning_TNEID_sample_id_match.tsv")
+TBTannot2 = left_join(TBTannot,IDmatch,by=c(patient_id="TNEID"))
+
+# format TBT annotation table to match Global annotation table
+colnames(TBTannot2) = tolower(colnames(TBTannot2)) #str_replace_all(,pattern = " ", replacement = "_")
+colnames(TBTannot2)[!colnames(TBTannot2) %in% colnames(Gannot)] # only reader and img file name info missing from global annot, ok
+colnames(Gannot)[!colnames(Gannot) %in% colnames(TBTannot2)] #only image ID (slightly different from img file name), partition ID (not needed with partition number), attention scores, group (similar to reader), and collagen fibers (not in TBT annotations)
+
+# merge the 2 tables
+all_annot = bind_rows(TBTannot2,Gannot)
+
+# check archetype annotation
+metadata = read_xlsx("../../Data/Supplementary_Table_S1.xlsx",skip=3)
+
+all_annot = left_join(all_annot,metadata,by=c("manuscript_id"="manuscript id"))
+```
+
+We format the data and compute statistics for each feature
+```{r}
+# format the architecture column
+## list possible labels
+architecture_labs = unique( unlist( str_split(unique( all_annot$`tissue architecture` ),", ") ) ) # "Trabecular"   "Organoid"     "Nested cells" "Solid"        "NI"           "Rosette"      "Papillary"    "Acinar"       "Follicular"   "No"          
+
+## only keep abundant terms
+architecture_labs_vals = sapply(architecture_labs, function(x) str_detect(all_annot$`tissue architecture`,x)) #remove Papillary and Follicular with <10 occurences, and No and NI that are the absence of others
+architecture_labs_vals = apply(architecture_labs_vals,2,as.character)
+
+all_annot2 = bind_cols(all_annot, architecture_labs_vals[,-c(5,7,9,10)])
+
+
+all_annot.perTile = all_annot2 %>% pivot_longer( c(fibroblast:necrosis,Trabecular:Acinar) ,names_to = "Feature") %>% 
+  mutate(value_numeric = case_when(value=="No" ~ 0,
+                                   value=="Yes" ~ 1,
+                                   value=="Unusually small"~0,
+                                   value=="Unusually low"~0,
+                                   value=="Medium"~0.5,
+                                   value=="Maybe"~0.5,
+                                   value=="Unusually high"~1,
+                                   value=="Unusually large"~1,
+                                   value=="TRUE"~1,
+                                   value=="FALSE"~0,
+                                   TRUE~NA)) %>% 
+  group_by(imgfname,Feature) %>% summarize(value_numeric = mean(value_numeric,na.rm=T),group=archtype_label_combined[1],partition=partition[1])
+
+
+
+# format other columns to numerical value
+all_annot.perSample = all_annot2 %>% pivot_longer( c(fibroblast:necrosis,Trabecular:Acinar) ,names_to = "Feature") %>% 
+  mutate(value_numeric = case_when(value=="No" ~ 0,
+                                   value=="Yes" ~ 1,
+                                   value=="Unusually small"~0,
+                                   value=="Unusually low"~0,
+                                   value=="Medium"~0.5,
+                                   value=="Maybe"~0.5,
+                                   value=="Unusually high"~1,
+                                   value=="Unusually large"~1,
+                                   value=="TRUE"~1,
+                                   value=="FALSE"~0,
+                                   TRUE~NA)) %>% 
+  group_by(patient_id,Feature) %>% summarize(value_numeric = mean(value_numeric,na.rm=T),group=archtype_label_combined[1])
+
+
+
+set.seed(0)
+all_annot.perSample.stats = data.frame(Feature=NULL,"Statistic"=NULL,"Parameter"=NULL,"P_value"=NULL)
+for(feat in unique(all_annot.perSample$Feature)[-29]){ # without tissue architecture, which is not numeric
+  print(feat)
+  datatmp = all_annot.perSample %>% filter(Feature==feat)
+  res = kruskal.test(value_numeric~group,data=datatmp)
+  res.means = datatmp %>% group_by(group) %>% summarize(mean = mean(value_numeric,na.rm=T))
+  
+  means.perm=c()
+  for(i in 1:10000){
+    group.perm = sample(datatmp$group,replace=F)
+    means.perm = rbind(means.perm,c( mean(datatmp$value_numeric[group.perm=="Ca A1"],na.rm=T), 
+                    mean(datatmp$value_numeric[group.perm=="Ca A2"],na.rm=T),
+                    mean(datatmp$value_numeric[group.perm=="Ca B"],na.rm=T) ) )
+  }
+  pval_A1A2 = mean( abs(res.means$mean[1]-res.means$mean[2]) <= abs(means.perm[,1]-means.perm[,2]) )
+  pval_A1B  = mean( abs(res.means$mean[1]-res.means$mean[3]) <= abs(means.perm[,1]-means.perm[,3]) )
+  pval_A2B  = mean( abs(res.means$mean[2]-res.means$mean[3]) <= abs(means.perm[,2]-means.perm[,3]) )
+  pval_global  = mean( (abs(res.means$mean[1]-res.means$mean[2])+abs(res.means$mean[1]-res.means$mean[3]))  <= 
+          (abs(means.perm[,1]-means.perm[,2]) + abs(means.perm[,1]-means.perm[,3]) ) )
+  
+  all_annot.perSample.stats = rbind( all_annot.perSample.stats, c(feat,res$statistic,res$parameter,res$p.value,(res.means %>% arrange( group) )$mean,
+                                                                  pval_A1A2,pval_A1B,pval_A2B,pval_global) )
+}
+colnames(all_annot.perSample.stats) = c("Feature","Statistic","Parameter","P_value","Ca A1","Ca A2","Ca B",
+                                        "empirical_P_value_A1vsA2","empirical_P_value_A1vsB","empirical_P_value_A2vsB","empirical_P_value_global")
+for(j in 2:ncol(all_annot.perSample.stats)) all_annot.perSample.stats[,j] = as.numeric(all_annot.perSample.stats[,j])
+
+all_annot.perSample.stats$q_value = p.adjust(all_annot.perSample.stats$P_value,method = "BH")
+all_annot.perSample.stats$empirical_q_value_A1vsA2 = p.adjust(all_annot.perSample.stats$empirical_P_value_A1vsA2,method = "BH")
+all_annot.perSample.stats$empirical_q_value_A1vsB  = p.adjust(all_annot.perSample.stats$empirical_P_value_A1vsB,method = "BH")
+all_annot.perSample.stats$empirical_q_value_A2vsB  = p.adjust(all_annot.perSample.stats$empirical_P_value_A2vsB,method = "BH")
+all_annot.perSample.stats$empirical_q_value_global = p.adjust(all_annot.perSample.stats$empirical_P_value_global,method = "BH")
+
+all_annot.perSample.stats %>% filter(q_value<=0.05 | empirical_q_value_global<=0.05)
+
+ggplot(all_annot.perSample.stats,aes(x=q_value,y=empirical_q_value_global)) + geom_point() + 
+  geom_smooth(method = "lm")+ geom_hline(yintercept=c(0.05,0.1),linetype="dashed") +
+  geom_vline(xintercept=c(0.05,0.1),linetype="dashed") +
+  theme_classic()
+```
+Write statistical results in a table
+```{r}
+write_tsv(all_annot.perSample.stats, "TableS42_stats.tsv")
+```
+
+# Fig S17 and 18: morphological features associations with partitions and molecular groups
+We plot the results (note that significance codes correspond to Wilcoxon rank sum tests, but we prefer to report the permutation tests computed above in the manuscript)
+```{r}
+features_list = all_annot.perSample.stats%>% mutate(global_effect_size = abs(`Ca A1`-`Ca A2`)+abs(`Ca A1`-`Ca B`)+abs(`Ca A2`-`Ca B`) ) %>%
+  arrange(-global_effect_size) %>% pull(Feature)  
+
+all_annot.perSample$Feature = factor(all_annot.perSample$Feature,levels=features_list)
+
+FigS17Lannottests = ggplot(all_annot.perSample %>% filter(!is.na(Feature)),aes(y=value_numeric,x=group,fill=group))+geom_violin(scale = "width",col=NA) + geom_boxplot(width=0.1,fill="white") + 
+  stat_compare_means(
+    comparisons=list(
+      c("Ca A1", "Ca A2"),c("Ca A1", "Ca B"),c("Ca A2", "Ca B")),
+    method="wilcox.test",
+    label="p.signif",
+    hide.ns=TRUE,
+    tip.length=0,label.y.npc = 0,
+    step.increase=0.2,
+  ) + scale_y_continuous(limits = c(0,1.6),breaks = c(0,0.5,1.0)) + 
+  theme_classic() + scale_fill_manual(values=arc4) + facet_wrap(.~Feature) + guides(fill="none")
+
+FigS17Lannottests
+
+ggsave(FigS17Lannottests,filename="FigS17_annotationtests.svg",h=2*5,w=2*5)
+
+rownames(all_annot.perSample.stats) = all_annot.perSample.stats$Feature
+pheatmap::pheatmap( t((all_annot.perSample.stats%>% filter(empirical_q_value_global<=0.05)) [,c(5:7)]) ,scale = "none")
+```
+
+We now look for the partitions that drive the signal for each feature
+```{r}
+TBTpartition_list = sort( unique(TBTannot$partition) )
+
+all_annot.perTile.wide = all_annot.perTile %>% pivot_wider(values_from=value_numeric,names_from=Feature)
+
+pval_tab = c()
+est_tab = c()
+gglist = vector("list",length(all_annot.perSample.stats$Feature))
+for(i in 1:length(features_list)){ # compute p values
+  pval_tab = rbind(pval_tab, sapply( TBTpartition_list , function(j) fisher.test( table(all_annot.perTile.wide[[features_list[i]]][all_annot.perTile.wide$partition %in% TBTpartition_list],
+                                                                                        all_annot.perTile.wide$partition[all_annot.perTile.wide$partition %in% TBTpartition_list]==j) )$p.value ) )
+  if(!features_list[i] %in% c("tumour cells size","n:c ratio")){
+    est_tab = rbind(est_tab, sapply( TBTpartition_list , function(j) fisher.test( table(all_annot.perTile.wide[[features_list[i]]][all_annot.perTile.wide$partition %in% TBTpartition_list] >0,all_annot.perTile.wide$partition[all_annot.perTile.wide$partition %in% TBTpartition_list]==j) )$estimate ) ) # odds ratio estimate for the largest category
+  }else{
+    est_tab = rbind(est_tab, sapply( TBTpartition_list , function(j) fisher.test( table(all_annot.perTile.wide[[features_list[i]]][all_annot.perTile.wide$partition %in% TBTpartition_list] !=0.5,all_annot.perTile.wide$partition[all_annot.perTile.wide$partition %in% TBTpartition_list]==j) )$estimate ) ) # odds ratio estimate for non medium category
+  }
+  
+}
+rownames(pval_tab) = rownames(est_tab) = features_list
+colnames(pval_tab) = colnames(est_tab) = TBTpartition_list
+
+qval_tab = apply(pval_tab,2,p.adjust,method="BH")  
+pheatmap::pheatmap( (qval_tab<=0.05 & est_tab>1)*1 + (qval_tab<=0.01 & est_tab>1)*1 +(qval_tab<=0.001 & est_tab>1)*1, cluster_rows = F,cluster_cols = F ) # significant AND odds ratio >1
+
+
+for(i in 1:length(features_list)){ # compute barplots for each feature
+  all_annot2.i = all_annot2 %>% group_by(partition,.data[[features_list[i]]] ) %>% summarize(n=n()) %>% 
+    mutate(Prop=n/sum(n),annotation=case_when(partition%in%TBTpartition_list~"Tile by tile",
+                                              TRUE~"Global") )
+
+  ggi = ggplot(all_annot2.i,aes(x=as.factor(partition),y=Prop,fill=.data[[features_list[i]]] )) + geom_bar(stat="identity",show.legend = F) +
+    geom_text(data = tibble(annotation="Tile by tile", qval = qval_tab[i,],partition=colnames(qval_tab),estimate = est_tab[i,] ) %>% mutate(Signif=case_when(qval<=0.001~"***",
+                                                                                                                                  qval<=0.01~"**",
+                                                                                                                                  qval<=0.05~"*",
+                                                                                                                                  qval<=0.1~".",
+                                                                                                                                  TRUE~"")) %>% filter(estimate>1),
+              aes(x=partition,y=0.9,label=Signif),angle=90 ,inherit.aes = F ) + 
+    scale_fill_manual(values=c(true_false_pal,t_cells_size,nc_ratio_pal,yes_no_pal)) + 
+    theme_classic() + facet_grid(.~annotation,scales = "free_x") + theme(axis.title = element_blank(),axis.text.x=element_text(angle=90,hjust = 1,vjust=0.5)) + 
+    coord_cartesian(expand=F,ylim=c(0,1.07)) + ggtitle(features_list[i])
+  gglist[[i]] = ggi
+}
+
+patchwork::wrap_plots(gglist, nrow = 6, ncol = 5)
+
+ggsave(filename = "FigS17.svg",patchwork::wrap_plots(gglist, nrow = 6, ncol = 5),h=2*6,w=3.5*5)
+
+write.table(est_tab,file = "TableS42_feature_partition_assoc_oddsratio.tsv",sep = "\t")
+write.table(pval_tab,file = "TableS42_feature_partition_assoc_pval.tsv",sep = "\t")
+write.table(qval_tab,file = "TableS42_feature_partition_assoc_qval.tsv",sep = "\t")
+```
+
+We can also plot the features per sample in a heatmap
+```{r}
+all_annot.perSample.wide = all_annot.perSample %>% pivot_wider(values_from="value_numeric",names_from =Feature )
+hm_data = as.data.frame(all_annot.perSample.wide[,-(1:2)])
+rownames(hm_data) = all_annot.perSample.wide$patient_id
+
+hm_row_annot =  all_annot.perSample.wide %>% dplyr::select(group) %>% as.data.frame()
+rownames(hm_row_annot) = make.unique(hm_row_annot$patient_id)
+
+# plot
+signif_features = all_annot.perSample.stats%>% filter(empirical_q_value_global<=0.05) %>% mutate(global_effect_size = abs(`Ca A1`-`Ca A2`)+abs(`Ca A1`-`Ca B`)+abs(`Ca A2`-`Ca B`) ) %>%
+  arrange(-global_effect_size) %>% pull(Feature)  #arrange(empirical_q_value_global) # order by decreasing effect size
+sample_order = bind_cols(Sample=rownames(hm_data), Group=all_annot.perSample.wide$group, as_tibble(hm_data)) %>% 
+  arrange(Group,-`spindle`,-`Organoid`,-`fibrosis`,-`Solid`,-`plasmocytoid`,-`salt and pepper chromatin`,-`clear cell changes`,-`cartilage / chondrocyte`,-`Nested cells`,-`oncocytic changes`,
+          -`tumour cells size`,-`n:c ratio`,-`Acinar`) %>% pull(Sample)
+
+pheatmap::pheatmap(hm_data[sample_order,signif_features],cluster_rows = F,cluster_cols = F,scale = "none",annotation_row = hm_row_annot,annotation_colors = list(group=arc4,type=type5) )
+```
+
+
+# Fig. 3d: generalisation of the results with CONCH
+We take the cosine similarity results from CONCH for prompts related to spindle shape and fibrosis:
+```{r}
+dfQ <- read_tsv("/data/lungNENomics/work/bonhemel/dataset/prompts_quantile_per_slide_Q_0.5_norm_False.tsv")
+dfQ_meta <- read_tsv("/data/lungNENomics/work/bonhemel/dataset/TNE_dataset.tsv")
+head(dfQ)  # prompts 1--11 are related to spindle shape, 12--21 to fibrosis
+
+p_list =  list()  
+pvals_anova = list()
+pvals_ttests = list()
+for(i in 1:21){
+  c_prompt = colnames(dfQ)[i]
+  print(c_prompt)
+  print(i)
+  pQ_norm <- ggplot(data=dfQ, aes(x=archetype_label_combined, y = .data[[c_prompt]] , fill=archetype_label_combined)) +
+    geom_violin(col=NA) +  geom_boxplot(fill="white",width=0.1) +
+    geom_quasirandom(data=dfQ %>% filter(archetype_label_combined=="sc-enriched"),shape=21, col="white")  +
+    scale_fill_manual(values= c(arc4, type5)) +
+    stat_compare_means(comparisons = list(
+      c("Ca A1","Ca A2"),
+      c("Ca A1","Ca B"),
+      c("Ca A1","sc-enriched"),
+      c("Ca A2","Ca B"),
+      c("Ca A2","sc-enriched"),
+      c("Ca B","sc-enriched")
+    ),
+    method = "t.test", label = "p.signif", hide.ns = FALSE, # Show 'ns' for non-significant results
+    tip.length = 0) +
+    stat_compare_means(method = "anova",label.x = 1, # Adjust to the left-most x position
+                       label.y = min(dfQ[[c_prompt]]) ) +
+    theme_classic() +
+    ylab("Median by WSI") +
+    ggtitle(c_prompt) +
+    theme(legend.position = "bottom",
+          legend.title = element_blank(),
+          axis.title.x = element_blank())
+  
+  
+  p_list[[i]] <- pQ_norm
+  
+  pvals_anova[[i]] <- bind_cols(Prompt=c_prompt,anova( lm(dfQ[[i]]~dfQ$archetype_label_combined) ) %>% broom::tidy() )
+  
+  pvals_ttests[[i]] <- bind_cols(Prompt=c_prompt, Level1 = c("Ca A1","Ca A1","Ca A1","Ca A2","Ca A2","Ca B"), Level2 = c("Ca A2","Ca B","sc-enriched","Ca B","sc-enriched","sc-enriched"), 
+            bind_rows( t.test(dfQ[[i]][dfQ$archetype_label_combined=="Ca A1"],dfQ[[i]][dfQ$archetype_label_combined=="Ca A2"])  %>% broom::tidy(), 
+  t.test(dfQ[[i]][dfQ$archetype_label_combined=="Ca A1"],dfQ[[i]][dfQ$archetype_label_combined=="Ca B"])  %>% broom::tidy(), 
+  t.test(dfQ[[i]][dfQ$archetype_label_combined=="Ca A1"],dfQ[[i]][dfQ$archetype_label_combined=="sc-enriched"])  %>% broom::tidy(), 
+  t.test(dfQ[[i]][dfQ$archetype_label_combined=="Ca A2"],dfQ[[i]][dfQ$archetype_label_combined=="Ca B"])  %>% broom::tidy(),
+  t.test(dfQ[[i]][dfQ$archetype_label_combined=="Ca A2"],dfQ[[i]][dfQ$archetype_label_combined=="sc-enriched"])  %>% broom::tidy(), 
+  t.test(dfQ[[i]][dfQ$archetype_label_combined=="Ca B"],dfQ[[i]][dfQ$archetype_label_combined=="sc-enriched"])  %>% broom::tidy() ) )
+  
+}
+pvals_anova = bind_rows(pvals_anova)
+pvals_anova = pvals_anova %>% mutate(q.value = p.adjust(p.value,method = "BH"), 
+                                     Significance = case_when(q.value<=0.001~"***",
+                                                              q.value<=0.01~"**",
+                                                              q.value<=0.05~"*",
+                                                              q.value<=0.~".",
+                                                              TRUE~"") )
+
+ggplot(pvals_anova,aes(x=Prompt,y=log10(q.value),col=Significance )) + geom_point() + 
+  geom_hline(yintercept = log10(0.05)) + theme_bw() + theme(axis.text.x = element_text(angle=90,hjust = 1,vjust=0.5)) # all significant
+
+pvals_ttests2 = bind_rows(pvals_ttests) %>% group_by(Level1,Level2) %>% mutate(q.value = p.adjust(p.value,method = "BH"), 
+                                     Significance = case_when(q.value<=0.001~"***",
+                                                              q.value<=0.01~"**",
+                                                              q.value<=0.05~"*",
+                                                              q.value<=0.1~".",
+                                                              TRUE~" ") )
+
+pvals_ttests2$Prompt = factor(pvals_ttests2$Prompt,levels=unique(pvals_ttests2$Prompt))
+pvals_ttests2$Prompt.type = case_when(pvals_ttests2$Prompt%in%colnames(dfQ)[1:11]~"Spindle shape",
+                                      pvals_ttests2$Prompt%in%colnames(dfQ)[12:21]~"Fibrosis")
+pvals_ttests2$Test = paste0(pvals_ttests2$Level1," vs ",pvals_ttests2$Level2)
+
+write_tsv(pvals_anova,file = "TableS42_conch_anova.tsv")
+write_tsv(pvals_ttests2,file = "TableS42_conch_ttests.tsv")
+
+ggplot(pvals_ttests2,aes(x=Prompt,y=log10(q.value),col=Significance,shape=Prompt.type )) + geom_point() + 
+  geom_hline(yintercept = log10(0.05),linetype="dashed") + geom_vline(xintercept = 11.5,linetype="dashed") +
+  theme_bw() + theme(axis.text.x = element_text(angle=90,hjust = 1,vjust=0.5)) + facet_grid(Level1~Level2)
+
+ggpromptsvalcano = ggplot(pvals_ttests2,aes(x=estimate,y=-log10(q.value),col=Prompt.type )) + geom_point() + 
+  geom_hline(yintercept = -log10(0.05),linetype="dashed") + geom_vline(xintercept = 0,linetype="dashed") +
+  ggrepel::geom_text_repel(data = (pvals_ttests2 %>% arrange(abs(q.value)) ) %>% group_by(Test,Prompt.type) %>% 
+                             mutate(Rank=rank(q.value)) %>% filter(Rank<=3,q.value<=0.05),  # display top 3 significant prompts of each type
+                           aes(label = Prompt), size = 3,show.legend = F,force = 2,force_pull = 0.1)  + #pvals_ttests2%>% filter(q.value<=0.05) 
+  theme_classic() + theme(axis.text.x = element_text(angle=90,hjust = 1,vjust=0.5)) + facet_grid(.~Test) +xlab("Cosine similarity difference") + scale_color_manual(values=c("Fibrosis"="#d35f8dff","Spindle shape"="#2ca05aff"))
+#col_signif = c(" "="grey","."="#FFEEAA","*"="#FFCC00","**"="#FF7F2A","***"="#C83737")
+
+ggsave(ggpromptsvalcano,filename="Fig_volcano_prompts.svg",height = 2.5,width=6*2.5)
+
+ggplot( pvals_ttests2 , aes(x=Test,y=Prompt,fill=estimate,size=-log10(q.value),col= (q.value<=0.05) )) + geom_point(shape=21)+ 
+  theme_classic() + theme(axis.text.x = element_text(angle=90,hjust=1,vjust=0.5))+
+  scale_size_continuous(breaks=c(0,-log10(0.05),-log10(0.01),-log10(0.001),12)) + scale_fill_gradient2()
+
+ggplot( pvals_ttests2 , aes(x=Level1,y=Prompt,fill=estimate+estimate1,size=estimate1)) + geom_point(shape=21)+ theme_classic() + 
+  scale_size_continuous(breaks=c(0,-log10(0.05),-log10(0.01),-log10(0.001),12)) + scale_fill_gradient2()
+
+dfQ.df = as.data.frame(dfQ)
+rownames(dfQ.df) = dfQ.df$manuscript_id
+sample_order = dfQ.df %>% arrange(archetype_label_combined,-rowSums(dfQ.df[,1:11]),-rowSums(dfQ.df[,12:21]) ) %>% pull(manuscript_id)
+
+
+pheatmap::pheatmap(dfQ.df[sample_order,1:21],scale = "column",cluster_cols = F,cluster_rows = F,annotation_row = dfQ.df %>% dplyr::select(archetype_label_combined))
+
+  
+
+ggsave(p_list[[5]]+p_list[[20]],filename="Fig3d_spindle.svg",height=3,width=2.5*2)
+
+png(paste0("SpindleCells_distribution_median_scores_norm_false.png"), width = 3800, height = 2200, res=300)
+ggarrange( p_list[[1]],  p_list[[2]],  p_list[[3]],  p_list[[4]],
+           p_list[[5]],  p_list[[6]],  p_list[[7]],  p_list[[8]] , 
+           p_list[[9]], p_list[[10]],
+           ncol= 4, nrow=2, common.legend = T, legend="bottom")
+dev.off()
+
+png(paste0("SpindleCells_distribution_median_scores_norm_false_simplified.png"), width = 2850, height = 2350, res=300)
+ggarrange( p_list[[1]],  p_list[[2]],  p_list[[3]],  
+           p_list[[5]],  p_list[[6]],  p_list[[9]],  
+           ncol= 3, nrow=2, common.legend = T, legend="bottom")
+dev.off()
+
+png(paste0("Collagen_distribution_median_scores_norm_false.png"), width = 2850, height = 2350, res=300)
+ggarrange( p_list[[12]],  p_list[[13]],  p_list[[14]],  
+           p_list[[15]],   p_list[[16]], 
+           common.legend = T, legend="bottom")
+dev.off()
+
+
+png(paste0("Fibroblast_distribution_median_scores_norm_false.png"), width = 1900, height = 1175, res=300)
+ggarrange(  p_list[[17]],  
+            p_list[[18]],   
+            nrow=1,
+            common.legend = T, legend="bottom")
+dev.off()
+
+
+
+png(paste0("Fibrosis_distribution_median_scores_norm_false.png"), width = 2850, height = 1175, res=300)
+ggarrange(  p_list[[19]],  p_list[[20]],  
+            p_list[[21]],   
+            nrow=1,
+            common.legend = T, legend="bottom")
+dev.off()
+```
+Compare spindle-cell and marker genes
+```{r}
+reg_subtypes = read_xlsx("../../Data/Supplementary_Table_S31.xlsx",skip=1) %>% mutate(manuscript_id = str_remove(`Sample ID`,"_TU[0-9_R]*$"))
+
+dfQ_regsubtypes = left_join(dfQ,reg_subtypes,by=c("manuscript_id"))
+
+# ASCL1 as category
+ggplot(dfQ_regsubtypes %>% filter(!is.na(`ASCL1 class`)), aes(x=`ASCL1 class`,y=`spindle shape`)) + 
+ geom_violin(col=NA,scale = "width") + geom_boxplot(width=.1) + 
+  geom_quasirandom(data=dfQ_regsubtypes %>% filter(!is.na(`ASCL1 class`), archetype_label_combined=="sc-enriched"))+
+  facet_wrap(.~archetype_label_combined)
+
+summary(lm(`spindle shape`~archetype_label_combined+`ASCL1 class`,data=dfQ_regsubtypes)) # differences between groups but not in ASCL1 classes within groups
+
+# ASCL1 as continuous variable
+ggplot(dfQ_regsubtypes %>% filter(!is.na(`ASCL1 expression (vst)`)), aes(x=`ASCL1 expression (vst)`,y=`spindle shape`,col=archetype_label_combined)) + 
+ geom_point()  
+summary(lm(`spindle shape`~archetype_label_combined+`ASCL1 expression (vst)`,data=dfQ_regsubtypes)) # differences between groups but not in ASCL1 classes within groups
+```
+
+We can check that the EMT score differences reflect spindle shape differences
+```{r}
+EMT = read_csv("/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/EMT_score_PCA_LCNEC_SCLC_ITH_TR.csv")
+EMT = left_join(EMT,metadata,by=c("...1"="sample id")) %>% filter(`LNET k = 4 archetype`%in%c("Ca A1","Ca A2","Ca B","sc-enriched"))
+
+library(ggbeeswarm)
+
+ggEMT = ggplot( EMT , aes(x=`LNET k = 4 archetype`,y=EMT_score,fill=`LNET k = 4 archetype`) ) + geom_violin(col=NA,show.legend = F) + geom_boxplot(width=0.1,fill="white") + 
+  geom_quasirandom(data=EMT %>% filter(`LNET k = 4 archetype`=="sc-enriched"),col="white",shape=21,show.legend = F) + 
+  stat_compare_means(
+    comparisons=list(
+      c("Ca A1", "Ca A2"),c("Ca A1", "Ca B"),c("Ca A1", "sc-enriched"),
+      c("Ca A2", "Ca B"),c("Ca A2", "sc-enriched"),c("Ca B", "sc-enriched")),
+    method="t.test",
+    label="p.signif",
+    hide.ns=TRUE,
+    tip.length=0,label.y.npc = 0,
+    step.increase=0.1,
+  ) + scale_fill_manual(values=arc4) + theme_classic() 
+
+ggsave(ggEMT,filename="EDFig4B_EMT.svg",height=2.5,width=2.5)
+```
+
+# Fig. 3E and Extended Data Fig. 4C: representative examples
+
+Representative examples of spindle cells : in Ca A1 sample, in partition associated with spindle cells, and with both pathologists agreeing on annotation and as little other features as possible
+```{r}
+candidates = all_annot.perTile %>% filter(Feature=="spindle",value_numeric==1,group=="Ca A1",partition%in%c(21,22,32,43,66)) %>% pull(imgfname)
+TBTannot2 %>% mutate(tot_other = rowSums(TBTannot2[,c(5:15,17:28)]=="Yes"|TBTannot2[,c(5:15,17:28)]=="Medium")) %>% filter(imgfname%in%candidates)  %>% arrange(tot_other)
+```
+
+Representative examples of organoid structure : in Ca A2 sample, in partition associated with organoids, and with both pathologists agreeing on annotation and as little other features as possible
+```{r}
+candidates = all_annot.perTile %>% filter(Feature=="Organoid",value_numeric==1,group=="Ca A2",partition%in%c(5,15,43,48,68)) %>% pull(imgfname)
+TBTannot2 %>% mutate(tot_other = rowSums(TBTannot2[,c(5:20,22:28)]=="Yes"|TBTannot2[,c(5:20,22:28)]=="Medium")) %>% filter(imgfname%in%candidates,`tissue architecture`=="Organoid")  %>% arrange(tot_other)
+```
+
+Representative examples of fibrosis : in Ca A1 or A2 sample, in partition associated with fibrosis, and with both pathologists agreeing on annotation and as little other features as possible
+```{r}
+candidates = all_annot.perTile %>% filter(Feature=="fibrosis",value_numeric==1,group%in%c("Ca A1","Ca A2"),partition%in%c(30,32,58,66)) %>% pull(imgfname)
+TBTannot2 %>% mutate(tot_other = rowSums(TBTannot2[,c(5:26,28)]=="Yes"|TBTannot2[,c(5:26,28)]=="Medium")) %>% filter(imgfname%in%candidates)  %>% arrange(tot_other)
+```
+
+
+Representative examples of solid architecture : in Ca A1 or B samples, in partition associated with solid architecture, and with both pathologists agreeing on annotation and as little other features as possible
+```{r}
+candidates = all_annot.perTile %>% filter(Feature=="Solid",value_numeric==1,group%in%c("Ca A1","Ca A2"),partition%in%c(5,21,66)) %>% pull(imgfname)
+TBTannot2 %>% mutate(tot_other = rowSums(TBTannot2[,c(5:26,28)]=="Yes"|TBTannot2[,c(5:26,28)]=="Medium")) %>% filter(imgfname%in%candidates,`tissue architecture`=="Solid")  %>% arrange(tot_other)
+```
+
+## A good example for Ca A1
+```{r}
+partition_df_ssRF = read_tsv("/data/lungNENomics/work/MathianE/LNEN_LCNEC_Molecular_barlow_twin/leinden_random_bt_proj/tile_partitions.tsv")
+
+partition_df_ssRF = partition_df_ssRF %>% mutate(x=as.numeric(str_remove_all(str_extract(img_id_c,"_[0-9]+_"),"_")),
+                                                 y=as.numeric(str_remove(str_extract(img_id_c,"_[0-9]+$"),"_")))
+
+partition_df = read_tsv("/data/lungNENomics/work/MathianE/LNEN_LCNEC_Molecular_barlow_twin/leinden_random_bt_proj/tile_partitions.tsv")
+
+A1candidates = all_annot.perSample.wide %>% filter(group=="Ca A1",spindle>0,Organoid==0,fibrosis>0,Solid>0,plasmocytoid==0) %>% arrange(-spindle,-Solid,-fibrosis,Organoid)
+A1candidates %>% dplyr::select(patient_id,group,spindle,Solid,fibrosis,Organoid,erythrocyte)
+
+TBTannot2 %>% filter(patient_id %in% A1candidates$patient_id[2])  %>% dplyr::select(patient_id,imgfname,spindle,`tissue architecture`,fibrosis,erythrocyte) %>% filter(`tissue architecture`=="Solid",spindle=="Yes") 
+
+
+sort( colSums(A1candidates[1,3:32]) , decreasing=T) # solid, spindle, salt & pepper, erythrocyte, round cells, fibrosis , also probA1 = 0.962 according to RF algo and 0.92 according to RoformerMIL=> good candidate example 
+sort( colSums(A1candidates[2,3:32]) , decreasing=T) #salt and pepper chromatin, polygonal, erythrocyte, spindle, solid, proba 0.98 according to roformerMIL
+sort( colSums(A1candidates[3,3:32]) , decreasing=T)
+sort( colSums(A1candidates[4,3:32]) , decreasing=T)
+sort( colSums(A1candidates[5,3:32]) , decreasing=T)
+sort( colSums(A1candidates[6,3:32]) , decreasing=T)
+
+
+partition_df_filter2.partprops = partition_df_filter2 %>% group_by(archtype_label_combined,sample_id,partition) %>% summarize(n=n()) %>% mutate(prop=n/sum(n)) %>% ungroup()
+partitionorder = partition_df_filter2.partprops %>% group_by(partition) %>% summarize(meanprop=sum(prop)/140) %>% arrange(-meanprop) %>% pull(partition) %>% unique()
+partition_df_filter2.partprops$partition = factor(partition_df_filter2.partprops$partition,levels=partitionorder)
+
+sampleorder = partition_df_filter2.partprops %>% arrange(partition,-prop) %>% pull(sample_id) %>% unique()
+partition_df_filter2.partprops$sample_id = factor(partition_df_filter2.partprops$sample_id,levels=sampleorder)
+
+ggplot(partition_df_filter2.partprops,aes(x=sample_id,y=prop,fill=partition )) + geom_bar(stat="identity") + facet_wrap(.~archtype_label_combined,scales = "free_x") + theme_classic() + theme(axis.text.x=element_text())
+
+# find most discriminative partitions
+partition_df_filter2.partprops.wide = partition_df_filter2.partprops %>% pivot_wider(values_from=prop,names_from=partition,names_prefix = "partition")
+partition_df_filter2.partprops.wide[is.na(partition_df_filter2.partprops.wide)] = 0
+
+library(lmPerm)
+pvals_assoc_group_partitions = lapply(1:(ncol(partition_df_filter2.partprops.wide)-3), 
+                                      function(i) bind_cols( colnames(partition_df_filter2.partprops.wide)[i+3], anova(lm(partition_df_filter2.partprops.wide[[i+3]]~partition_df_filter2.partprops.wide$archtype_label_combined ) ) %>% 
+                                                               broom::tidy())  )
+
+pvals_assoc_group_partitions = bind_rows(pvals_assoc_group_partitions)
+pvals_assoc_group_partitions$q.value = p.adjust(pvals_assoc_group_partitions$p.value,method="BH")
+signifparts_groups = pvals_assoc_group_partitions %>% filter(q.value<=0.05) %>% mutate(partition=str_remove(`...1`,"partition")) #partitions 4, 5, 
+
+# dotplot
+partition_df_filter2.partprops4dotplot = partition_df_filter2.partprops %>% group_by(archtype_label_combined,partition) %>% summarize(presence=sum(prop>=0.05)/140,abundance=mean(prop[prop>=0.05]))
+
+Fig_dots_partitions = ggplot(partition_df_filter2.partprops4dotplot %>% filter(partition %in% signifparts_groups$partition),aes(x=archtype_label_combined,y=partition,col=abundance,size=presence )) + 
+  geom_point()+ theme_classic() + theme(axis.text.x=element_text()) + scale_color_viridis_b()
+
+ggsave(Fig_dots_partitions,filename="Fig_dotspartitions.svg",height=2*2,width=3)
+```
+Partitions associated with A2
+```{r}
+A2candidates = all_annot.perSample.wide %>% filter(group=="Ca A2",spindle==0,Organoid>0,fibrosis>0,Solid==0,polygonal>0) %>% arrange(-Organoid,-fibrosis,-polygonal)
+A2candidates %>% dplyr::select(patient_id,group,Organoid,fibrosis,polygonal,plasmocytoid) #TNE1430
+
+sort( colSums(A2candidates[1,3:32]) , decreasing=T)#
+```
+
+Partitions associated with B
+```{r}
+Bcandidates = all_annot.perSample.wide %>% filter(group=="Ca B",spindle==0,Organoid==0,fibrosis==0,Solid>0,polygonal==0,`round cells`>0) %>% arrange(-Solid,-`round cells`)
+Bcandidates %>% dplyr::select(patient_id,group,Organoid,fibrosis,polygonal,plasmocytoid) #TNE1430
+
+sort( colSums(A2candidates[1,3:32]) , decreasing=T)#
+```
+
+Interpretation of partitions
+```{r}
+# partitions associated with A1
+all_annot.perTile %>% filter(partition==35) %>% group_by(Feature) %>% summarize(meanfeature = mean(value_numeric)) %>% arrange(-meanfeature) #mostly round cells, erythrocytes
+# 4 spindle cells
+all_annot.perTile %>% filter(partition==66) %>% group_by(Feature) %>% summarize(meanfeature = mean(value_numeric)) %>% arrange(-meanfeature) #mostly salt and peper chromatin, polygonal, solid, spindle cells
+all_annot.perTile %>% filter(partition==15) %>% group_by(Feature) %>% summarize(meanfeature = mean(value_numeric)) %>% arrange(-meanfeature) #mostly salt and peper chromatin, round cells, organoid architecture
+all_annot.perTile %>% filter(partition==22) %>% group_by(Feature) %>% summarize(meanfeature = mean(value_numeric)) %>% arrange(-meanfeature) #mostly salt and peper chromatin, polygonal, clear cell changes, spindle cells
+
+# partitions associated with A2
+#59 organoid round cells
+#73 fibrosis polygonal cells salt and pepper chromatin
+#64  polygonal cells salt and pepper chromatin
+#45 round cells
+#44 round cells organoid
+
+# partitions associated with B
+all_annot.perTile %>% filter(partition==5) %>% group_by(Feature) %>% summarize(meanfeature = mean(value_numeric)) %>% arrange(-meanfeature) #round cells, solid
+#26 round cells
+#41 round cells
+
+# other
+#global
+#72: spindle cells
+#28, 39: erythrocytes
+
+all_annot.perTile %>% filter(partition==32) %>% group_by(Feature) %>% summarize(meanfeature = mean(value_numeric)) %>% arrange(-meanfeature) #mostly salt and peper chromatin, fibrosis, polygonal, solid
+all_annot.perTile %>% filter(partition==58) %>% group_by(Feature) %>% summarize(meanfeature = mean(value_numeric)) %>% arrange(-meanfeature) #nothing above 50%, otherwise erythrocytes, endothelial cells, fribrosis
+```
+
+Check correspondance between partition IDs pre and post path review
+```{r}
+#partition_df = partition_df %>% mutate(x=as.numeric(str_remove_all(str_extract(img_id_c,"_[0-9]+_"),"_")),
+#                                                                                   y=as.numeric(str_remove(str_extract(img_id_c,"_[0-9]+$"),"_")))
+#partition_df %>% filter(sample_id=="TNE0956") #"TNE0058")
+
+#partition_df <-  read.csv("/data/lungNENomics/work/MathianE/LNEN_LCNEC_Molecular_barlow_twin/leinden_random_bt_proj/LeidenCom/K_250_res_2.0/partitions_3.csv")
+#cheche = left_join(partition_df,partition_df_filter2,by=c("img_id", "sample_id") )
+#table(cheche$partition.x,cheche$partition.y)
+
+TBTannot2 = TBTannot2 %>% mutate(x=as.numeric(str_remove_all(str_extract(imgfname,"_[0-9]+_"),"_")),
+                                 y=as.numeric(str_remove_all(str_extract(imgfname,"_[0-9]+\\.jpg$"),"_|.jpg"))) 
+Gannot2 = Gannot %>% mutate(x=as.numeric(str_remove_all(str_extract(img_id_c,"_[0-9]+_"),"_")),
+                            y=as.numeric(str_remove_all(str_extract(img_id_c,"_[0-9]+$"),"_"))) 
+
+Gannot2_partition_df_join = left_join(Gannot2,partition_df_filter2 %>% dplyr::select(sample_id,img_id_c,partition,TNEID,x,y),by=c("img_id_c","x","y"))
+
+table(Gannot2_partition_df_join$partition.x,Gannot2_partition_df_join$partition.y) # same partition annotation, all good
+```
+
+Get partition proportions for the A1 samples
+```{r}
+for(TNEnum in A1candidates$patient_id){
+  print(getwd())
+#TNEnum = "TNE0956" #"TNE0058"
+partition_df.TNE = partition_df_filter2 %>% filter( sample_id ==TNEnum ) %>% mutate(x=as.numeric(str_remove_all(str_extract(img_id_c,"_[0-9]+_"),"_")),
+                                                                                   y=as.numeric(str_remove(str_extract(img_id_c,"_[0-9]+$"),"_")))
+
+TNE_partitions = partition_df_filter2 %>% filter( sample_id ==TNEnum ) %>% group_by(partition) %>% summarize(n=n()) # 50 => solid architecture (maybe plasmocytoid, maybe salt and pepper chromatin, polygonal and round cells); 14 => discarded; 22=> spindle, salt and pepper, polygonal, clear cell changes; 74 => discarded, 106 => discarded
+
+partitionorder = TNE_partitions %>% arrange(-n) %>% pull(partition)
+TNE_partitions$partition = factor(TNE_partitions$partition,levels=partitionorder)
+colpartitions = c(RColorBrewer::brewer.pal(3,"Paired"),rep("gray",7))
+names(colpartitions) = partitionorder
+
+ggpartitionsTNE = ggplot(TNE_partitions,aes(x=1,y=n,fill=factor(partition))) + geom_bar(stat="identity") + scale_fill_manual(values=colpartitions) + theme_classic()
+
+
+ggsave(ggpartitionsTNE,filename=paste0(TNEnum,"_barplotparts.svg"),height=2.5,width=2.5)
+# plot slide
+TBTannot2.TNE = TBTannot2 %>% filter(patient_id ==TNEnum) %>% mutate(x=as.numeric(str_remove_all(str_extract(imgfname,"_[0-9]+_"),"_")),
+                                                                                   y=as.numeric(str_remove_all(str_extract(imgfname,"_[0-9]+\\.jpg$"),"_|.jpg"))) # get TBT annots => 5 tiles from partition 32 : spindle cells + fibrosis + other things
+Gannot2.TNE = Gannot %>% filter(patient_id ==TNEnum) %>% mutate(x=as.numeric(str_remove_all(str_extract(img_id_c,"_[0-9]+_"),"_")),
+                                                                                   y=as.numeric(str_remove_all(str_extract(img_id_c,"_[0-9]+$"),"_")))  # get Global annots => 2 tiles from partition 4 : spindle cells + round cells
+
+
+partition_df.TNE$partition = factor(partition_df.TNE$partition,levels=partitionorder)
+ggparts = ggplot(partition_df.TNE , aes(x=x,y=-y,fill=partition)) + geom_tile() + 
+  geom_point(data = TBTannot2.TNE%>%filter(patient_id=="TNE0956",x%in%c(40321)), aes(x=x,y=-y),col="red",inherit.aes = F) + 
+  #geom_point(data = TBTannot2.TNE%>%filter(patient_id=="TNE0956",x%in%c(49537)), aes(x=x,y=-y),col="blue",inherit.aes = F) + 
+  geom_point(data = Gannot2.TNE, aes(x=x,y=-y),col="orange",inherit.aes = F) + 
+  scale_fill_manual(values=colpartitions) + theme_classic() + coord_fixed(xlim=range(partition_df$x),ylim=c(-1,-96001))
+ggsave(ggparts,filename=paste0(TNEnum,".svg"))
+ggparts
+
+ggparts_ssRF = ggplot(partition_df_ssRF %>% filter(sample_id=="TNE0956") , aes(x=x,y=-y,fill=factor(partition))) + geom_tile() + 
+  geom_point(data = TBTannot2.TNE, aes(x=x,y=-y),col="red",inherit.aes = F) + 
+  geom_point(data = Gannot2.TNE, aes(x=x,y=-y),col="orange",inherit.aes = F) + 
+  #scale_fill_manual(values=colpartitions) + theme_classic() +
+  coord_fixed(xlim=range(partition_df$x),ylim=c(-1,-96001))
+
+print(ggparts + ggparts_ssRF)
+
+ggsave(ggparts_ssRF,filename=paste0(TNEnum,"_ss.svg"))
+}
+```
+
+Same for A2 samples
+Get partition proportions for the A1 samples
+```{r}
+for(TNEnum in A2candidates$patient_id){
+  print(getwd())
+partition_df.TNE = partition_df_filter2 %>% filter( sample_id ==TNEnum ) %>% mutate(x=as.numeric(str_remove_all(str_extract(img_id_c,"_[0-9]+_"),"_")),
+                                                                                   y=as.numeric(str_remove(str_extract(img_id_c,"_[0-9]+$"),"_")))
+
+TNE_partitions = partition_df_filter2 %>% filter( sample_id ==TNEnum ) %>% group_by(partition) %>% summarize(n=n()) 
+
+partitionorder = TNE_partitions %>% arrange(-n) %>% pull(partition)
+TNE_partitions$partition = factor(TNE_partitions$partition,levels=partitionorder)
+colpartitions = c(RColorBrewer::brewer.pal(3,"Paired"),rep("gray",length(partitionorder)-3 ))
+names(colpartitions) = partitionorder
+
+ggpartitionsTNE = ggplot(TNE_partitions,aes(x=1,y=n,fill=factor(partition))) + geom_bar(stat="identity") + scale_fill_manual(values=colpartitions) + theme_classic()
+
+
+ggsave(ggpartitionsTNE,filename=paste0(TNEnum,"_barplotparts.svg"),height=2.5,width=2.5)
+# plot slide
+TBTannot2.TNE = TBTannot2 %>% filter(patient_id ==TNEnum) %>% mutate(x=as.numeric(str_remove_all(str_extract(imgfname,"_[0-9]+_"),"_")),
+                                                                                   y=as.numeric(str_remove_all(str_extract(imgfname,"_[0-9]+\\.jpg$"),"_|.jpg"))) # get TBT annots => 5 tiles from partition 32 : spindle cells + fibrosis + other things
+Gannot2.TNE = Gannot %>% filter(patient_id ==TNEnum) %>% mutate(x=as.numeric(str_remove_all(str_extract(img_id_c,"_[0-9]+_"),"_")),
+                                                                                   y=as.numeric(str_remove_all(str_extract(img_id_c,"_[0-9]+$"),"_")))  # get Global annots => 2 tiles from partition 4 : spindle cells + round cells
+
+
+partition_df.TNE$partition = factor(partition_df.TNE$partition,levels=partitionorder)
+ggparts = ggplot(partition_df.TNE , aes(x=x,y=-y,fill=partition)) + geom_tile() + 
+  geom_point(data = TBTannot2.TNE%>%filter(patient_id==TNEnum), aes(x=x,y=-y),col="red",inherit.aes = F) + 
+  #geom_point(data = TBTannot2.TNE%>%filter(patient_id==TNEnum), aes(x=x,y=-y),col="blue",inherit.aes = F) + 
+  geom_point(data = Gannot2.TNE, aes(x=x,y=-y),col="orange",inherit.aes = F) + 
+  scale_fill_manual(values=colpartitions) + theme_classic() + coord_fixed(xlim=range(partition_df$x),ylim=c(-1,-96001))
+ggsave(ggparts,filename=paste0("CaA2_",TNEnum,".svg"))
+ggparts
+
+ggparts_ssRF = ggplot(partition_df_ssRF %>% filter(sample_id==TNEnum) , aes(x=x,y=-y,fill=factor(partition))) + geom_tile() + 
+  geom_point(data = TBTannot2.TNE, aes(x=x,y=-y),col="red",inherit.aes = F) + 
+  geom_point(data = Gannot2.TNE, aes(x=x,y=-y),fill="orange",inherit.aes = F) + 
+  #geom_point(data = Gannot2.TNE[10,], aes(x=x,y=-y),col="black",fill="orange",inherit.aes = F,shape=21) + 
+  #scale_fill_manual(values=colpartitions) + theme_classic() +
+  coord_fixed(xlim=range(partition_df$x),ylim=c(-1,-96001))
+
+print(ggparts + ggparts_ssRF)
+
+ggsave(ggparts_ssRF,filename=paste0("CaA2_",TNEnum,"_ss.svg"))
+}
+```
+
+Same for B samples
+Get partition proportions for the A1 samples
+```{r}
+for(TNEnum in Bcandidates$patient_id){
+  print(getwd())
+partition_df.TNE = partition_df_filter2 %>% filter( sample_id ==TNEnum ) %>% mutate(x=as.numeric(str_remove_all(str_extract(img_id_c,"_[0-9]+_"),"_")),
+                                                                                   y=as.numeric(str_remove(str_extract(img_id_c,"_[0-9]+$"),"_")))
+
+TNE_partitions = partition_df_filter2 %>% filter( sample_id ==TNEnum ) %>% group_by(partition) %>% summarize(n=n()) 
+
+partitionorder = TNE_partitions %>% arrange(-n) %>% pull(partition)
+TNE_partitions$partition = factor(TNE_partitions$partition,levels=partitionorder)
+colpartitions = c(RColorBrewer::brewer.pal(4,"Paired"),rep("gray",length(partitionorder)-4 ))
+names(colpartitions) = partitionorder
+
+ggpartitionsTNE = ggplot(TNE_partitions,aes(x=1,y=n,fill=factor(partition))) + geom_bar(stat="identity") + scale_fill_manual(values=colpartitions) + theme_classic()
+
+
+ggsave(ggpartitionsTNE,filename=paste0(TNEnum,"_barplotparts.svg"),height=2.5,width=2.5)
+# plot slide
+TBTannot2.TNE = TBTannot2 %>% filter(patient_id ==TNEnum) %>% mutate(x=as.numeric(str_remove_all(str_extract(imgfname,"_[0-9]+_"),"_")),
+                                                                                   y=as.numeric(str_remove_all(str_extract(imgfname,"_[0-9]+\\.jpg$"),"_|.jpg"))) # get TBT annots => 5 tiles from partition 32 : 
+#TBTannot2.TNE %>% dplyr::select(partition,imgfname,reader,spindle,`round cells`,plasmocytoid,`tissue architecture`,erythrocyte) # round cells, solid, erythrocyte, maybe plasmocytoid
+
+Gannot2.TNE = Gannot %>% filter(patient_id ==TNEnum) %>% mutate(x=as.numeric(str_remove_all(str_extract(img_id_c,"_[0-9]+_"),"_")),
+                                                                                   y=as.numeric(str_remove_all(str_extract(img_id_c,"_[0-9]+$"),"_")))  # get Global annots => 2 tiles from partition 4 : spindle cells + round cells
+
+
+partition_df.TNE$partition = factor(partition_df.TNE$partition,levels=partitionorder)
+ggparts = ggplot(partition_df.TNE , aes(x=x,y=-y,fill=partition)) + geom_tile() + 
+  geom_point(data = TBTannot2.TNE%>%filter(patient_id==TNEnum), aes(x=x,y=-y),col="red",inherit.aes = F) + 
+  #geom_point(data = TBTannot2.TNE%>%filter(patient_id==TNEnum), aes(x=x,y=-y),col="blue",inherit.aes = F) + 
+  geom_point(data = Gannot2.TNE, aes(x=x,y=-y),col="orange",inherit.aes = F) + 
+  scale_fill_manual(values=colpartitions) + theme_classic() + coord_fixed(xlim=range(partition_df$x),ylim=c(-1,-96001))
+ggsave(ggparts,filename=paste0("CaB_",TNEnum,".svg"))
+
+ggparts_ssRF = ggplot(partition_df_ssRF %>% filter(sample_id==TNEnum) , aes(x=x,y=-y,fill=factor(partition))) + geom_tile() + 
+  geom_point(data = TBTannot2.TNE, aes(x=x,y=-y),col="red",inherit.aes = F) + 
+  geom_point(data = Gannot2.TNE, aes(x=x,y=-y),fill="orange",inherit.aes = F) + 
+  #geom_point(data = Gannot2.TNE[2,], aes(x=x,y=-y),col="black",fill="orange",inherit.aes = F,shape=21) +  # useful to highlight particular regions
+  #scale_fill_manual(values=colpartitions) + theme_classic() +
+  coord_fixed(xlim=range(partition_df$x),ylim=c(-1,-96001))
+
+print(ggparts + ggparts_ssRF)
+
+ggsave(ggparts_ssRF,filename=paste0("CaB_",TNEnum,"_ss.svg"))
+}
+```
+
+# Session info
+```{r}
+sessionInfo()
+```

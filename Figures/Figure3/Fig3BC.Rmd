@@ -1,0 +1,391 @@
+---
+title: "Fig3BC"
+author: "E. Mathian, A. Sexton-Oates, and N. Alcala"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Figure 3BC and associated supplementary figures: Whole-slide images deep learning analyses
+
+This document produces Figure 3BC from the lungNENomics manuscript, describing the results of Deep-learning analyses of whole-slide images.
+
+## Load libraries
+```{r}
+library(ggplot2)
+library(ggpubr)
+library(corrplot)
+library(RColorBrewer)
+library(dplyr)
+library(tidyr)
+library(optimx)
+#install.packages("ggExtra")
+library(ggExtra)
+library(webr)
+library(stringr)
+library(tibble)
+library(gridExtra)
+library(reshape2)
+library(tools)
+library(janitor)
+#install.packages("readxl")
+library(readxl)
+library(gghighlight)
+library(scales)
+library(ggbeeswarm)
+library(mvtnorm)
+library(RColorBrewer)
+library(ade4)
+library(ComplexHeatmap)
+library(caret)
+library(randomForest)
+#library(lsa)
+library(wconf) # Not in original script
+```
+
+```{r setup}
+knitr::opts_knit$set(root.dir = "/data/lungNENomics/work/MathianE/LNEN_LCNEC_Molecular_barlow_twin/leinden_random_bt_proj")
+```
+
+```{r}
+source("A:/work/Descriptive_manuscript_data/Colour_palettes.R")
+
+partitons_palettes <- c(paletteer::paletteer_d("rcartocolor::Pastel"), paletteer::paletteer_d("rcartocolor::Bold"),  
+                        paletteer::paletteer_d("rcartocolor::Antique"), paletteer::paletteer_d("rcartocolor::Vivid"),
+                        paletteer::paletteer_d("DresdenColor::foolmoon"), paletteer::paletteer_d("colRoz::l_vestiens"),
+                        paletteer::paletteer_d("suffrager::oxon"),paletteer::paletteer_d("lisa::KarlZerbe")#,
+)
+sample_id_palettes <- c(paletteer::paletteer_d("rcartocolor::Pastel"), paletteer::paletteer_d("rcartocolor::Bold"),  
+                        paletteer::paletteer_d("rcartocolor::Antique"), paletteer::paletteer_d("rcartocolor::Vivid"),
+                        paletteer::paletteer_d("DresdenColor::foolmoon"), paletteer::paletteer_d("colRoz::l_vestiens"),
+                        paletteer::paletteer_d("suffrager::oxon"),paletteer::paletteer_d("lisa::KarlZerbe"),
+                        paletteer::paletteer_d("MetBrewer::Java"), paletteer::paletteer_d("nationalparkcolors::Badlands"),
+                        paletteer::paletteer_d("nationalparkcolors::Voyageurs"),paletteer::paletteer_d("NatParksPalettes::Arches2"),
+                        paletteer::paletteer_d("nationalparkcolors::Hawaii"), paletteer::paletteer_d("MetBrewer::Tara"),
+                        paletteer::paletteer_d("MetBrewer::NewKingdom"), paletteer::paletteer_d("MetBrewer::Navajo"),
+                        paletteer::paletteer_d("MetBrewer::Johnson"), paletteer::paletteer_d("MetBrewer::Java"), paletteer::paletteer_d("MetBrewer::Isfahan2"),
+                        paletteer::paletteer_d("MetBrewer::Greek"), paletteer::paletteer_d("lisa::KarlZerbe") ,
+                        paletteer::paletteer_d("lisa::GrantWood"), paletteer::paletteer_d("lisa::AndyWarhol_3"), paletteer::paletteer_d("lisa::AndyWarhol_2"), 
+                        paletteer::paletteer_d("lisa::AndyWarhol_1"), paletteer::paletteer_d("lisa::AndyWarhol"),
+                        paletteer::paletteer_d("lisa::JohannesVermeer_1"),paletteer::paletteer_d("lisa::JohannesVermeer") ,paletteer::paletteer_d("lisa::DiegoVelazquez"),
+                        paletteer::paletteer_d("lisa::RemediosVaro"),paletteer::paletteer_d("lisa::VincentvanGogh_2"), paletteer::paletteer_d("lisa::VincentvanGogh_1"),
+                        paletteer::paletteer_d("lisa::VincentvanGogh"), paletteer::paletteer_d("lisa::JanvanEyck"),paletteer::paletteer_d("lisa::TheovanDoesburg_1"),
+                        paletteer::paletteer_d("lisa::TheovanDoesburg"), paletteer::paletteer_d("lisa::CyTwombly"), paletteer::paletteer_d("lisa::J_M_W_Turner"),
+                        paletteer::paletteer_d("lisa::PavelTchelitchew"), paletteer::paletteer_d("lisa::SandySkoglund"), paletteer::paletteer_d("lisa::GeorgesSeurat"),
+                        paletteer::paletteer_d("lisa::JohnSingerSargent_2"), paletteer::paletteer_d("lisa::Pierre_AugusteRenoir"), paletteer::paletteer_d("lisa::Rembrandt"),
+                        paletteer::paletteer_d("lisa::OdilonRedon"), paletteer::paletteer_d("lisa::MelRamos"),
+                        paletteer::paletteer_d("RColorBrewer::Pastel1"),#
+                        paletteer::paletteer_d("RColorBrewer::Set1"),
+                        paletteer::paletteer_d("trekcolors::gorn"))
+blue_pal <- brewer.pal(9,"Blues") # Added this from TCAC script - not sure its required 
+```
+# Useful functions
+
+
+### Creation of the matrix
+```{r}
+create_Leiden_matrices <- function(df, nb_partition, key_tab, sc=TRUE){
+  
+  LeidenPart_sample_idcorrect_1 <- df %>%
+    group_by(partition , sample_id) %>%
+    tally()
+  
+  
+  LeidenPart_sample_idcorrect_2 <- df %>%
+    group_by( sample_id) %>%
+    tally()
+  
+  LeidenPart_sample_idcorrect_12 <- merge(LeidenPart_sample_idcorrect_1, LeidenPart_sample_idcorrect_2, by = "sample_id")
+  LeidenPart_sample_idcorrect_12$freq = LeidenPart_sample_idcorrect_12$n.x/LeidenPart_sample_idcorrect_12$n.y
+  
+  LeidenPart_sample_idcorrect <- LeidenPart_sample_idcorrect_12
+  LeidenPart_sample_idcorrect <- LeidenPart_sample_idcorrect[,!(names(LeidenPart_sample_idcorrect) %in% c('n.x','n.y'))]
+  
+  
+  LeidenPart_sample_idcorrect_mat = LeidenPart_sample_idcorrect %>%
+    pivot_wider(names_from = sample_id     , values_from = freq)
+  
+  
+  LeidenPart_sample_idcorrect_mat <- LeidenPart_sample_idcorrect_mat %>% replace(is.na(.), 0)
+  
+  LeidenPart_sample_idcorrect_mat=as.matrix(LeidenPart_sample_idcorrect_mat, labels=TRUE)
+  class(LeidenPart_sample_idcorrect_mat) <- 'numeric'
+  sample_id_in_mat <- names(LeidenPart_sample_idcorrect_mat[1,])
+  
+  rownames(LeidenPart_sample_idcorrect_mat) <- paste0("Clst", LeidenPart_sample_idcorrect_mat[,1])
+  LeidenPart_sample_idcorrect_mat <- LeidenPart_sample_idcorrect_mat[,2:ncol(LeidenPart_sample_idcorrect_mat)]
+  if(sc){
+    LeidenPart_sample_idcorrect_mat <- scale(LeidenPart_sample_idcorrect_mat, center = sc, scale = sc)
+    
+  }
+  
+  LeidenPart_sample_idcorrect_mat_t <- t(LeidenPart_sample_idcorrect_mat[,1:ncol(LeidenPart_sample_idcorrect_mat)] )
+  
+  rownames(LeidenPart_sample_idcorrect_mat_t) <- sample_id_in_mat[2:length(sample_id_in_mat)]
+  LeidenPart_sample_mat_info <- merge(LeidenPart_sample_idcorrect_mat_t, key_tab, by.x = 'row.names', by.y = 'sample_id')
+  colnames(LeidenPart_sample_mat_info)[1] <- "sample_id"
+  
+  LeidenPart_sample_mat_info_data <- LeidenPart_sample_mat_info[,2:(nb_partition + 1)]
+  
+  LeidenPart_sample_mat_info_data=as.matrix(LeidenPart_sample_mat_info_data, labels=TRUE)
+  rownames(LeidenPart_sample_mat_info_data) <- LeidenPart_sample_mat_info$sample_id
+  colnames(LeidenPart_sample_mat_info_data) <- colnames(LeidenPart_sample_mat_info)[2:(nb_partition + 1)]
+  
+  return(list(LeidenPart_sample_mat_info_data, LeidenPart_sample_mat_info))
+  
+  
+}
+
+random_forest_leave_one_out <- function(df,
+                                        nb_leiden = nb_cluster,
+                                        target_classification = 'archetype',
+                                        classes = 'CaA1_CaA2',
+                                        Nb_classes = 3,
+                                        two_classes = T){
+  
+  
+  
+  classifier_info = data.frame(nb_leiden = nb_leiden,
+                               target_classification = target_classification,
+                               classes = classes,
+                               Nb_classes = Nb_classes
+  )
+  
+  leiden_matrices <- create_Leiden_matrices(df, nb_leiden, key_tab,  sc=F)
+  leidenCommunity_path <- leiden_matrices[[2]]
+  leidenCommunity_data <- leiden_matrices[[1]]
+  leidenCommunity_data <- data.frame(leidenCommunity_data)
+  if(target_classification =='archetype'){
+    leidenCommunity_data$archtype_label_combined <- as.factor(leidenCommunity_path$archtype_label_combined)
+    summary(leidenCommunity_data$archtype_label_combined)
+    levels(leidenCommunity_data$archtype_label_combined) <- make.names(levels(factor(leidenCommunity_data$archtype_label_combined)))
+  }
+  
+  if(two_classes){
+    fitControl <- trainControl(
+      method = 'LOOCV',                # k-fold cross validation 'cv'
+      number = 1,                     # number of folds
+      savePredictions = 'final',       # saves predictions for optimal tuning parameter
+      classProbs = T ,                 # should class probabilities be returned
+      summaryFunction=twoClassSummary  # results summary function
+    )
+  }else{
+    fitControl <- trainControl(
+      method = 'LOOCV',                # k-fold cross validation 'cv'
+      number = 1,                     # number of folds
+      savePredictions = 'final',       # saves predictions for optimal tuning parameter
+      classProbs = T ,                 # should class probabilities be returned
+      summaryFunction=multiClassSummary  # results summary function
+    )
+  }
+  if(target_classification =='archetype' ){
+    rf_test <- randomForest(archtype_label_combined ~ ., data=leidenCommunity_data  , importance=TRUE,ntree=500)
+    tab_var_imp <- importance(rf_test)
+    #png(filename = 'FiguresPCA50K_164_Clst/Var_Imp_TCAC_MajVote.png',width= 4320, height=4320, res =600,bg = "transparent")
+    var_imp_plot <- varImpPlot(rf_test)
+    #dev.off()
+  }
+  grid <- expand.grid(mtry = c(nb_leiden))
+  if(target_classification =='archetype' ){
+    if(two_classes){
+      model <- train(archtype_label_combined ~ ., data=leidenCommunity_data ,method='rf',   tuneGrid=grid  ,trControl = fitControl,  metric="Sens")
+    }else{
+      model <- train(archtype_label_combined ~ ., data=leidenCommunity_data ,method='rf',   tuneGrid=grid  ,trControl = fitControl,  metric="Accuracy")
+    }
+  }
+  res_model =  model$results
+  res_model = cbind(classifier_info,res_model )
+  print(table(model$pred$obs, model$pred$pred))
+  table_pred <- data.frame(table(model$pred$obs, model$pred$pred))
+  colnames(table_pred)[2] <- 'Ground_truth'
+  colnames(table_pred)[1] <- 'Prediction'
+  
+  #png(filename = 'FiguresPCA50K_164_Clst/Pred_CaA1CaA2.png',width= 3320, height=3320, res =600,bg = "transparent")
+  #
+  pred_mol <- ggballoonplot(table_pred, x= table_pred$Prediction, y=table_pred$Ground_truth, fill = "Freq",   size.range=c(10,60), show.label = TRUE,
+                            font.label = list(size = 18, face = 'bold', color = "black"))+
+    scale_fill_gradientn(colors = lime_pal[2:7])+
+    ylab("Prediction")+
+    xlab("Ground Truth")+
+    #ggtitle("Random forest : \n Prediction of molecular cluster")+
+    theme_classic()   +
+    theme(
+      legend.position = "none",
+      axis.title = element_text(size=18),
+      axis.text.x= element_text(size=16, angle =45, hjust =  0.5, color = "black" , vjust = 0.5),
+      axis.title.x =  element_text(size=18,  color = "black" ),
+      axis.text.y= element_text(size=16, color = "black" ),
+      axis.title.y =  element_text(size=18,  color = "black" ),
+      legend.title = element_blank(),
+      text = element_text(size = 14, face="bold", colour = "black"),
+      legend.text=element_text(size=14)
+    )
+  pred_mol
+  #dev.off()
+  df_pred = cbind(rownames(leidenCommunity_data) ,model$pred)
+  colnames(df_pred)[1] <- "sample_id"
+  return(list("res_model"=res_model, "pred_mol"=pred_mol,  "df_pred"=df_pred, "tab_var_imp"=tab_var_imp, "var_imp_plot"=var_imp_plot))
+}
+```
+
+# Import data -------------------------------------------------------------
+```{r}
+key_tab <- read.csv("../KEY_FILE_tneid_manuscript_id_match.csv")
+table(key_tab[(key_tab$main_vs_dupliated_slides == "main") & (key_tab$archtype_label_combined %in% c("Ca A1", "Ca A2", "Ca B")),]$archtype_label_combined) # 77 A1, 64 A2, 52 B
+
+classification_df <- read.csv("../RoformerMILResA1A2B/predictions_all_test_folds.csv")
+classification_df$labels_names <- ifelse(classification_df$labels_names == "CaA1", "Ca A1",
+                                         ifelse(classification_df$labels_names == "CaA2", "Ca A2", "Ca B"))
+classification_df$preds_names <- ifelse(classification_df$preds  == 0, "Ca A1",
+                                         ifelse(classification_df$preds == 1, "Ca A2", "Ca B"))
+
+partition_df <-  read.csv("LeidenCom/K_250_res_2.0/partitions_3.csv")
+bt_highest_attn_scores <- read.csv("../projector/concat_proj_by_patient/barlowTwinsLNEN_LCNEC_with_attn_scores_correct_pred_select_leiden_search.csv")
+bt_highest_attn_scores <- merge(bt_highest_attn_scores, partition_df %>% dplyr::select(img_id_c, partition), on="img_id_c")
+
+colnames(partition_df)
+```
+# Figure RoformerMIL performances 
+
+```{r}
+print(table(classification_df$labels_names, classification_df$preds_names))
+#       Ca A1 Ca A2 Ca B
+
+table_pred <- data.frame(table(classification_df$labels_names, classification_df$preds_names))
+colnames(table_pred)[2] <- 'Ground_truth'
+colnames(table_pred)[1] <- 'Prediction'
+
+pred_mol <- ggballoonplot(table_pred, x= table_pred$Prediction, y=table_pred$Ground_truth, fill = "Freq",   size.range=c(10,40), show.label = TRUE,
+                          font.label = list(size = 12, face = 'bold', color = "black"))+
+  scale_fill_gradientn(colors = lime_pal[1:6])+
+  ylab("Prediction")+
+  xlab("Reference")+
+  #ggtitle("Roformer MIL - classification")+
+  theme_classic()   +
+  theme(
+    legend.position = "none",
+    #axis.title = element_text(size=18),
+    #axis.text.x= element_text(size=16, hjust =  0.5, color = "black" , vjust = 0.5),
+    #axis.title.x =  element_text(size=18,  color = "black" ),
+    #axis.text.y= element_text(size=16, color = "black" ),
+    #axis.title.y =  element_text(size=18,  color = "black" ),
+    #text = element_text(size = 14,  colour = "black"),
+    #legend.text=element_text(size=14)
+  )
+pred_mol
+
+
+conf_matrix <- confusionMatrix(as.factor(classification_df$labels_names), as.factor(classification_df$preds_names))
+overall_stats <- conf_matrix$overall
+class_stats <- conf_matrix$byClass
+# Precision for each class
+precision_each_class <- class_stats[,"Precision"]
+recall_each_class <- class_stats[,"Recall"]
+# Weighted precision
+weighted_precision <- sum(precision_each_class * prop.table(table(classification_df$labels_names)))
+weighted_recall <- sum(recall_each_class * prop.table(table(classification_df$labels_names)))
+
+scores_df <- data.frame("Class"=c("Ca A1", "Ca A2", "Ca B", "all"),
+                        "Precision"=c(class_stats[,"Precision"], weighted_precision),
+                        "Recall"=c(class_stats[,"Recall"], weighted_recall))
+
+
+scores_df <- scores_df %>% pivot_longer(cols=c("Precision","Recall"), names_to="Score")
+scores_df$Class <- factor(scores_df$Class, levels=c("Ca A1", "Ca A2", "Ca B", "all"))
+scores_plot <- ggplot(data=scores_df, aes(x=Class, y=value, fill=Score)) +
+  geom_bar(stat="identity", color="black", position=position_dodge())+
+  ylim(c(0,1))+
+  scale_fill_manual(values=c( lime_pal[2], lime_pal[7] ))+
+  geom_text(aes(label=round(value,2)), vjust=1.6, color="black",
+            position = position_dodge(0.9), size=5, fontface ="bold")+
+  theme_classic()   +
+  theme(
+    legend.position = "bottom",
+    axis.title = element_text(size=18),
+    axis.text.x= element_text(size=16, hjust =  0.5, color = "black" , vjust = 0.5),
+    axis.title.x = element_blank(),
+    axis.text.y= element_text(size=16, color = "black" ),
+    axis.title.y = element_blank(),
+    text = element_text(size = 14,  colour = "black"),
+    legend.text=element_text(size=14),
+    legend.title = element_blank()
+  )
+
+```
+
+# performance table
+```{r}
+cm <- confusionMatrix(as.factor(classification_df$labels_names), as.factor(classification_df$preds_names))
+cm_score <- data.frame(cm$byClass)
+class_counts <- table(classification_df$labels_names)
+total_count <- length(classification_df$labels_names)
+weights <- class_counts / total_count
+
+cm_score <- rbind(cm_score, unlist(lapply(cm_score, weighted.mean,  w = weights)))
+rownames(cm_score)[4] <- "Weighted scores"
+#write.csv(cm_score, "FiguresOverviewPerfRoformerLeiden_K250_res2_run3/Supplementary_table_S33.csv")
+cm_score # The same as Emilie's table S33 
+#                 Sensitivity Specificity Pos.Pred.Value Neg.Pred.Value Precision    Recall        F1 Prevalence Detection.Rate Detection.Prevalence Balanced.Accuracy
+# Class: Ca A1      0.7407407   0.8482143      0.7792208      0.8189655 0.7792208 0.7407407 0.7594937  0.4196891      0.3108808            0.3989637         0.7944775
+# Class: Ca A2      0.7049180   0.8409091      0.6718750      0.8604651 0.6718750 0.7049180 0.6880000  0.3160622      0.2227979            0.3316062         0.7729136
+# Class: Ca B       0.7254902   0.8943662      0.7115385      0.9007092 0.7115385 0.7254902 0.7184466  0.2642487      0.1917098            0.2694301         0.8099282
+# Weighted scores   0.7247528   0.8582265      0.7253886      0.8547513 0.7253886 0.7247528 0.7247266  0.3434455      0.2495637            0.3417273         0.7914897
+
+
+# Barplot Comp performances ----------------------------------------------- 
+cm <- confusionMatrix(as.factor(classification_df$labels_names), as.factor(classification_df$preds_names))
+cm_score <- data.frame(cm$byClass)
+class_counts <- table(classification_df$labels_names)
+total_count <- length(classification_df$labels_names)
+weights <- class_counts / total_count
+
+
+cm_w_score <- data.frame(t(data.frame(colSums(cm_score*weights))))
+
+res_score <- data.frame("classif"=c("CaA1_CaA2_CaB"),
+                        "method"=("supervised_Roformer_Leiden"))
+
+res_score <- cbind(res_score, cm_w_score )
+
+
+#res_score_bt_mol <- read.csv("../leinden_random_bt_proj/FiguresOverviewPerfUnsupervisedBT_LeidenComApproximated_75_res3_r1/random_forest_CaA1CaA2CaB_perf.csv")
+#res_score_bt_type <- read.csv("../leinden_random_bt_proj/FiguresOverviewPerfUnsupervisedBT_LeidenComApproximated_75_res3_r1_TCAC/random_forest_TCAC_perf.csv")
+res_score_bt_mol <- read.csv("A:/work/Descriptive_manuscript_data/Images/Deep_learning_Alexandra/Self_supervised_Molecular_groups/random_forest_CaA1CaA2CaB_perf.csv")
+res_score_bt_type <- read.csv("A:/work/Descriptive_manuscript_data/Images/Deep_learning_Alexandra/Self_supervised_Typical_Atypical/random_forest_TCAC_perf_Alexandra.csv")
+
+res_score_bt_mol
+#       classif                 method Sensitivity Specificity Pos.Pred.Value Neg.Pred.Value Precision    Recall        F1 Prevalence Detection.Rate Detection.Prevalence Balanced.Accuracy
+# CaA1_CaA2_CaB unsupervised_BT_Leiden   0.7239583   0.8526273      0.7240385      0.8547291 0.7240385 0.7239583 0.7238801  0.3411458      0.2475043            0.3424479         0.7882928
+
+res_score_bt_type
+# classif                 method Sensitivity Specificity Pos.Pred.Value Neg.Pred.Value Precision    Recall        F1 Prevalence Detection.Rate Detection.Prevalence Balanced.Accuracy
+#   TC_AC unsupervised_BT_Leiden   0.2765957   0.8969697      0.4333333      0.8131868 0.4333333 0.2765957 0.3376623  0.2216981     0.06132075            0.1415094         0.5867827
+
+res_scores_all <- rbind(res_score, res_score_bt_mol[,2:ncol(res_score_bt_mol)], res_score_bt_type[,2:ncol(res_score_bt_type)])
+res_scores_all$analysis_name <- c("Supervised (RoFormer-MIL): Ca A1, Ca A2, Ca B", "Self-supervised (RF): Ca A1, Ca A2, Ca B", "Self-supervised (RF): Typical, Atypical")
+
+res_scores_all$analysis_name <- factor(res_scores_all$analysis_name, levels=c("Supervised (RoFormer-MIL): Ca A1, Ca A2, Ca B", "Self-supervised (RF): Ca A1, Ca A2, Ca B", "Self-supervised (RF): Typical, Atypical"))
+
+all_scores_f1_plot <- ggplot(data=res_scores_all, aes(x=analysis_name, y=F1, fill=analysis_name)) +
+  geom_bar(stat="identity", color="black", position=position_dodge())+
+  ylim(c(0,1))+
+  ylab("Weigthed F1 Scores")+
+  scale_fill_manual(values=c(   lime_pal[6], lime_pal[3]  ,  "#88CCEE"   ))+
+  geom_text(aes(label=round(F1,2)), vjust=1.6, color="black",
+            position = position_dodge(0.9), size=5, fontface ="bold")+
+  theme_classic()   +
+  theme(
+    legend.position = "bottom",
+    #axis.title = element_text(size=18),
+    axis.text.x= element_blank(),
+    axis.title.x = element_blank(),
+    #axis.text.y= element_text(size=16, color = "black" ),
+    #axis.title.y = element_text(size=16, color = "black" ),
+    #text = element_text(size = 14,  colour = "black"),
+    #legend.text=element_text(size=14),
+    legend.title = element_blank()
+  )+guides(fill=guide_legend(nrow=3,byrow=TRUE))
+
+pdf("A:/work/Descriptive_manuscript_data/Images/Deep_learning_Alexandra/Figure_5b_5c.pdf", h=4.5, w=9)
+ggarrange(all_scores_f1_plot, pred_mol, ncol=2, widths = c(0.75, 1), labels=c("b", "c"))
+dev.off()
+```
