@@ -1,0 +1,58 @@
+---
+title: "Fig. 2d"
+author: "Alexandra Sexton-Oates"
+date: "07/08/2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+
+### Load libraries
+
+```{r}
+library(openxlsx)
+library(ggplot2)
+library(ggalluvial)
+library(dplyr)
+```
+
+
+### Read and format datasets
+
+```{r}
+reg_class <- read.xlsx("Supplementary_Table_S31.xlsx", startRow = 3)
+reg_class <- reg_class[,c(1:9)]
+
+tert_class <- read.xlsx("Supplementary_Table_S36.xlsx", startRow = 3)
+tert_class <- tert_class[,c(1:11)]
+
+class_data <- merge(reg_class, tert_class, by.x = "Sample.ID", by.y = "sample_id", all.x = TRUE)
+```
+
+
+### Create alluvial plot
+
+```{r}
+alluvial_data <- class_data %>% group_by(`TERT.expression.category.(internal)`, Molecular.group, Regulatory.subtype) %>% summarize(Freq=n())
+is_alluvia_form(as.data.frame(alluvial_data), axes = 1:3, silent = TRUE)
+
+colnames(alluvial_data) <- c("TERT_class", "molecular_group", "regulatory_class", "frequency")
+
+alluvial_data$TERT_class <- ifelse(alluvial_data$TERT_class=="low", "TERT_low", "TERT_high")
+alluvial_data$TERT_class <- factor(alluvial_data$TERT_class, levels=c("TERT_low","TERT_high"))
+alluvial_data$regulatory_class <- factor(alluvial_data$regulatory_class, levels=c("Proneural", "HNF", "Luminal", "Other"))
+alluvial_data$molecular_group <- ifelse(alluvial_data$molecular_group=="sc-enriched","sc-e",alluvial_data$molecular_group)
+
+ggplot(as.data.frame(alluvial_data),
+       aes(axis1 = TERT_class, axis2 = molecular_group, axis3 = regulatory_class,
+           y = frequency,
+           fill = molecular_group)) +
+  scale_x_discrete(expand = c(.1, .1)) +
+  geom_flow() +
+  geom_stratum(alpha = .5, fill="white") +
+  geom_text(stat = "stratum", size = 3, aes(label = after_stat(stratum))) +
+  theme(legend.position = "none") + theme_void() + guides(fill="none") + scale_fill_manual(values=c("Ca A1"="#999933", "Ca A2"="#DDCC77", "Ca B"="#117733", "sc-e"="#CC6677"))
+```
