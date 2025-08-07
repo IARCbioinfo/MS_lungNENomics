@@ -1,0 +1,49 @@
+---
+title: "Fig. 2e"
+author: "Alexandra Sexton-Oates"
+date: "07/08/2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+
+### Load libraries
+
+```{r}
+library(openxlsx)
+library(ggpubr)
+```
+
+
+### Read and format datasets
+
+```{r}
+IHC_data <- read.xlsx("Supplementary_Table_S37.xlsx", startRow = 4)
+IHC_data$IHC_prediction <- ifelse(IHC_data$IHC_prediction=="unclassifiable", "Unclassified",IHC_data$IHC_prediction)
+```
+
+
+### Create balloon plot
+
+```{r}
+contigency_data <- data.frame(table(IHC_data$Molecular_group, IHC_data$IHC_prediction))
+colnames(contigency_data)[c(1,2)] <- c("Molecular group", "IHC classification")
+contigency_data
+
+sunset <- c('#FEDA8B', '#FDB366', '#F67E4B', '#DD3D2D', '#A50026')
+
+ggballoonplot(contigency_data, y = contigency_data$`IHC classification`, x = contigency_data$`Molecular group`, fill = "value",  
+              size.range=c(1,30), show.label = TRUE,
+              font.label = list(size = 14, face = 'bold', color = "black")) +
+  scale_fill_gradientn(colors = sunset) +
+  xlab("Molecular group") + ylab("IHC classification") +
+  theme_classic() +
+  theme(legend.position="none",
+        axis.text.x = element_text(size=14),
+        axis.text.y = element_text(size=14),
+        text = element_text(size = 14),
+        plot.title = element_text(hjust = 0.5)) 
+```
