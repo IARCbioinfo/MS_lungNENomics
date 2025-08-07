@@ -1,0 +1,136 @@
+---
+title: "Fig. 1a,b,c"
+author: "Alexandra Sexton-Oates"
+date: "2025-08-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+### Load libraries
+```{r}
+library(openxlsx)
+library(ggplot2)
+library(survival)
+library(survminer)
+```
+
+### Read data and format 
+```{r}
+table_S1 <- read.xlsx("Supplementary_Table_S1.xlsx", startRow = 4)
+table_S1 <- table_S1[!(is.na(table_S1$`LNET.k.=.4.archetype`)), ]
+
+table_S4 <- read.xlsx("Supplementary_Table_S4.xlsx", startRow = 4)
+table_S4 <- table_S4[!(is.na(table_S4$MOFA_LNET_Factor1)), ]
+
+table_S6 <- read.xlsx("Supplementary_Table_S6.xlsx", startRow = 5)
+table_S6 <- table_S6[c(1:4),c(9:12)]
+table_S6$Factor1 <- as.numeric(table_S6$Factor1)
+table_S6$Factor2 <- as.numeric(table_S6$Factor2)
+table_S6$Factor5 <- as.numeric(table_S6$Factor5)
+table_S6 <- table_S6[,c(2,3,4,1)]
+```
+
+### Create Figure 1a
+
+```{r}
+plot_1a <- merge(table_S1[,c(1,42,47)], table_S4[,c(1,4,5)], by.x="sample.id", by.y="sample_id")
+colnames(plot_1a) <- c("sample_id", "supra_carcinoid", "molecular_group", "Factor1", "Factor2")
+
+supra <- plot_1a$sample_id[which(!(is.na(plot_1a$supra_carcinoid)))]
+
+segments_LF12 <- data.frame(x = table_S6$Factor1, y = table_S6$Factor2, xend = table_S6$Factor1[c(2,3,1,1)], yend = table_S6$Factor2[c(2,3,1,1)])
+temp <- data.frame(x=table_S6[4,1], y=table_S6[4,2], xend=table_S6$Factor1[2], yend=table_S6$Factor2[2])
+segments_LF12 <- rbind(segments_LF12, temp)
+temp <- data.frame(x=table_S6[4,1], y=table_S6[4,2], xend=table_S6$Factor1[3], yend=table_S6$Factor2[3])
+segments_LF12 <- rbind(segments_LF12, temp)
+rm(temp)
+
+ggplot(plot_1a, aes(x=Factor1, y=Factor2, color=molecular_group)) + xlab("Latent Factor 1") + ylab("Latent Factor 2") + 
+  geom_point(size = 2.5, alpha = 0.8) +
+  geom_point(data=plot_1a[plot_1a$sample_id %in% supra,], pch=21, fill=NA, size=3.5, colour="#7f7f7f", stroke=1) +
+  scale_colour_manual(name = "molecular_group", values=c("sc-enriched"="#CC6677","Ca A1"="#999933","Ca B"="#117733","Ca A2"="#DDCC77")) +
+  geom_point(data = table_S6, aes(x = Factor1, y = Factor2), size = 1.5, color = "#332288") +
+  geom_segment(data = segments_LF12, aes(x = x, y = y, xend = xend, yend = yend), color = "#332288", lineend = "round", linejoin = "round", linewidth = 0.5) +
+  theme_classic() + labs(title="ParetoTI fit MOFA LNET \n k=4 over three latent factors (LFs 1, 2 & 5)") + theme(plot.title = element_text(hjust = 0.5))
+```
+
+### Create Figure 1b
+
+```{r}
+plot_A <- as.data.frame(round(prop.table(table(table_S1$`LNET.k.=.4.archetype`, table_S1$type), margin=1), digits=2))
+
+plot_B <- as.data.frame(round(prop.table(table(table_S1$`LNET.k.=.4.archetype`, table_S1$`sex.(omics.data.inferred)`), margin=1), digits=2))
+plot_B$Var2 <- ifelse(plot_B$Var2=="F","Female","Male")
+
+plot_C <- as.data.frame(round(prop.table(table(table_S1$`LNET.k.=.4.archetype`, table_S1$`age.(categorical)`), margin=1), digits=2))
+
+plot_D <- as.data.frame(round(prop.table(table(table_S1$`LNET.k.=.4.archetype`, table_S1$location), margin=1), digits=2))
+plot_D$Var2 <- ifelse(plot_D$Var2=="proximal","Proximal","Distal")
+
+plot_1b <- rbind(plot_A, plot_B)
+plot_1b <- rbind(plot_1b, plot_C)
+plot_1b <- rbind(plot_1b, plot_D)
+
+plot_1b$category <- c(rep("Type",16),rep("Sex",8),rep("Age",12),rep("Location",8))
+plot_1b$Var1 <- factor(plot_1b$Var1, levels=c("sc-enriched","Ca B","Ca A2","Ca A1"))
+plot_1b$Var2 <- factor(plot_1b$Var2, levels=c("Typical","Atypical","Carcinoid","NET G3","Female","Male","16-40","41-65","66-90","Proximal","Distal"))
+
+ggplot(plot_1b, aes(x=Var2, y=Var1, colour=Var2, size=Freq)) +
+  geom_point() +
+  theme_classic() + 
+  scale_color_manual(values=c("Carcinoid"="#CEDB80","Typical"="#9DB802","Atypical"="#025B0E","NET G3"="#B89F4A",
+                              "Male"="#364B9A", "Female"="#A50026",
+                              "16-40"="#feda8b", "41-65"="#f67e4b", "66-90"="#A50026",
+                              "Proximal"="#999933", "Distal"="#AA4499")) +
+  scale_size_continuous(range=c(-1,10), breaks = c(0,0.25,0.5,0.75,1)) +
+  theme(axis.text.x=element_text(angle=45, hjust=1)) +
+  theme(legend.position = "none") +
+  
+  geom_vline(xintercept=4.5, linetype='dashed', col = "#7f7f7f") +
+  geom_vline(xintercept=6.5, linetype='dashed', col = "#7f7f7f") +
+  geom_vline(xintercept=9.5, linetype='dashed', col = "#7f7f7f") +
+  
+  annotate(geom="text", x=2.5, y=4.4, label="Type", color="black") +
+  annotate(geom="text", x=5.5, y=4.4, label="Sex", color="black") +
+  annotate(geom="text", x=8, y=4.4, label="Age", color="black") +
+  annotate(geom="text", x=10.5, y=4.4, label="Location", color="black") +
+  
+  geom_point(data=plot_1b[13,], pch=21, fill=NA, size=13*plot_1b[13,3], colour="black", stroke=1) +
+  geom_point(data=plot_1b[17,], pch=21, fill=NA, size=12*plot_1b[17,3], colour="black", stroke=1) +
+  geom_point(data=plot_1b[29,], pch=21, fill=NA, size=14*plot_1b[29,3], colour="black", stroke=1) +
+  geom_point(data=plot_1b[33,], pch=21, fill=NA, size=15*plot_1b[33,3], colour="black", stroke=1) +
+  geom_point(data=plot_1b[37,], pch=21, fill=NA, size=12*plot_1b[37,3], colour="black", stroke=1) +
+  
+  geom_point(data=plot_1b[14,], pch=21, fill=NA, size=13*plot_1b[14,3], colour="black", stroke=1) +
+  geom_point(data=plot_1b[18,], pch=21, fill=NA, size=12*plot_1b[18,3], colour="black", stroke=1) +
+  geom_point(data=plot_1b[30,], pch=21, fill=NA, size=14*plot_1b[30,3], colour="black", stroke=1) +
+  geom_point(data=plot_1b[26,], pch=21, fill=NA, size=15*plot_1b[26,3], colour="black", stroke=1) +
+  geom_point(data=plot_1b[42,], pch=21, fill=NA, size=11*plot_1b[42,3], colour="black", stroke=1) +
+  
+  geom_point(data=plot_1b[23,], pch=21, fill=NA, size=12*plot_1b[23,3], colour="black", stroke=1) +
+  geom_point(data=plot_1b[31,], pch=21, fill=NA, size=14*plot_1b[31,3], colour="black", stroke=1) +
+  geom_point(data=plot_1b[35,], pch=21, fill=NA, size=14*plot_1b[35,3], colour="black", stroke=1) +
+  
+  labs(x="", y="Molecular group")
+```
+
+### Create Figure 1c
+
+```{r}
+surv_data <- table_S1[,c(1,47,34,35,37,38)]
+colnames(surv_data)[2] <- "molecular_group"
+
+surv_data$status <- ifelse(surv_data$census.status=="alive", 1, ifelse(surv_data$census.status=="dead", 2, surv_data$census.status))
+surv_data$status <- as.numeric(surv_data$status)
+surv_data$time <- surv_data$overall.survival.months
+surv_data <- surv_data[!(is.na(surv_data$status)),]
+surv_data <- surv_data[!(is.na(surv_data$time)),] # 288 samples
+surv_data$time <- as.numeric(surv_data$time)
+
+data_OS_object <- Surv(time = surv_data$time, event = surv_data$status)
+fit_OS <- survfit(Surv(time, status) ~ molecular_group, data = surv_data)
+ggsurvplot(fit_OS, pval = TRUE, title="Overall survival by molecular group", legend = c(0.75, 0.2), palette=c("#999933","#DDCC77","#117733","#CC6677"), legend.labs = c("Ca A1", "Ca A2", "Ca B","sc-enriched"))
+```
