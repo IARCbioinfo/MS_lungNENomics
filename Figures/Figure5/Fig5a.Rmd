@@ -1,0 +1,155 @@
+---
+title: "Fig. 5a"
+author: "Alexandra Sexton-Oates"
+date: "07/08/2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+
+### Load libraries
+```{r}
+library(openxlsx)
+library(ggplot2)
+library(ggbeeswarm)
+library(dplyr)
+```
+
+
+### Read dataset
+```{r}
+data_5a <- read.xlsx("Data_Figure_5a.xlsx")
+arc4 <- c("Ca A1"="#999933", "Ca A2"="#DDCC77", "Ca B"="#117733", "sc-enriched"="#CC6677") 
+```
+
+
+### MKI67 expression 
+
+Statistical tests
+```{r}
+summary(aov(MKI67_expression_vst ~ molecular_group, data = data_5a))[[1]][1,5] 
+
+t.test(data_5a$MKI67_expression_vst[which(data_5a$molecular_group %in% c("Ca A1", "Ca A2"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca A1", "Ca A2"))], alternative = "two.sided")
+t.test(data_5a$MKI67_expression_vst[which(data_5a$molecular_group %in% c("Ca A1", "Ca B"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca A1", "Ca B"))], alternative = "two.sided") 
+t.test(data_5a$MKI67_expression_vst[which(data_5a$molecular_group %in% c("Ca A1", "sc-enriched"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca A1", "sc-enriched"))], alternative = "two.sided") 
+t.test(data_5a$MKI67_expression_vst[which(data_5a$molecular_group %in% c("Ca A2", "Ca B"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca A2", "Ca B"))], alternative = "two.sided") 
+t.test(data_5a$MKI67_expression_vst[which(data_5a$molecular_group %in% c("Ca A2", "sc-enriched"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca A2", "sc-enriched"))], alternative = "two.sided")
+t.test(data_5a$MKI67_expression_vst[which(data_5a$molecular_group %in% c("Ca B", "sc-enriched"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca B", "sc-enriched"))], alternative = "two.sided") 
+```
+
+
+Plot
+```{r}
+ggplot(data=data_5a, aes(x=molecular_group, y = log10(MKI67_expression_TPM +1), fill=molecular_group)) +
+  geom_violin(scale = "width") + 
+  geom_boxplot(fill="white", width=0.1, outlier.size = 0.4) +
+  geom_quasirandom(shape=21, col="white",data=data_5a %>% filter(molecular_group =="sc-enriched")) +
+  scale_fill_manual(name = "Molecular group", values=c(arc4)) +
+  geom_hline(yintercept = log10(1+1), linetype="dashed") +
+  theme_classic() + ylab("MKI67 expression [log10(TPM+1)]") + xlab("Molecular group") +
+  theme(legend.position = "bottom") +
+  scale_y_continuous(breaks = c(0,0.5,1,1.5), limits=c(0,2.7)) +
+  guides(color=guide_legend(nrow=1,byrow=TRUE)) + 
+  geom_segment(aes(x=1,xend=2,y=1.5,yend=1.5)) + geom_text(aes(label = "*", y = 1.6, x=1.5)) +
+  geom_segment(aes(x=1,xend=4,y=1.8,yend=1.8)) + geom_text(aes(label = "***", y = 1.9, x=2.5)) +
+  geom_segment(aes(x=2,xend=4,y=2.1,yend=2.1)) + geom_text(aes(label = "***", y = 2.2, x=3)) +
+  geom_segment(aes(x=3,xend=4,y=2.4,yend=2.4)) + geom_text(aes(label = "***", y = 2.5, x=3.5)) +
+  geom_text(aes(label = "P value = 9.4 x10-10, ANOVA", y = 2.7, x=2)) +
+  theme(axis.text.y=element_text(size=11), axis.text.x=element_text(size=11), 
+        axis.title.x=element_text(size=11), axis.title.y=element_text(size=11)) + 
+  theme(legend.text=element_text(size=11), legend.title=element_text(size=11)) +
+  guides(fill="none")
+```
+
+
+### Ki-67 index
+
+Statistical tests
+```{r}
+summary(aov(Ki67_index ~ molecular_group, data = data_5a))[[1]][1,5] 
+
+t.test(data_5a$Ki67_index[which(data_5a$molecular_group %in% c("Ca A1", "Ca A2"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca A1", "Ca A2"))], alternative = "two.sided") 
+t.test(data_5a$Ki67_index[which(data_5a$molecular_group %in% c("Ca A1", "Ca B"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca A1", "Ca B"))], alternative = "two.sided") 
+t.test(data_5a$Ki67_index[which(data_5a$molecular_group %in% c("Ca A1", "sc-enriched"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca A1", "sc-enriched"))], alternative = "two.sided")
+t.test(data_5a$Ki67_index[which(data_5a$molecular_group %in% c("Ca A2", "Ca B"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca A2", "Ca B"))], alternative = "two.sided")
+t.test(data_5a$Ki67_index[which(data_5a$molecular_group %in% c("Ca A2", "sc-enriched"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca A2", "sc-enriched"))], alternative = "two.sided") 
+t.test(data_5a$Ki67_index[which(data_5a$molecular_group %in% c("Ca B", "sc-enriched"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca B", "sc-enriched"))], alternative = "two.sided") 
+```
+
+
+Plot
+```{r}
+ggplot(data=data_5a, aes(x=molecular_group, y=Ki67_index, fill=molecular_group)) +
+  geom_violin(scale = "width") + 
+  geom_boxplot(fill="white", width=0.1, outlier.size = 0.4) +
+  geom_quasirandom(shape=21, col="white",data=data_5a %>% filter(molecular_group =="sc-enriched")) +
+  scale_fill_manual(name = "Molecular group", values=c(arc4)) +
+  geom_hline(yintercept = 30, linetype="dashed") +
+  theme_classic() + ylab("Mean Ki-67 index") + xlab("Molecular group") +
+  theme(legend.position = "bottom") +
+  scale_y_continuous(breaks = c(0,10,20,30,40), limits=c(0,40)) +
+  guides(color=guide_legend(nrow=1,byrow=TRUE)) + 
+  geom_text(aes(label = "P value = 2.21 x10-06, ANOVA", y = 39, x=2)) +
+  theme(axis.text.y=element_text(size=11), axis.text.x=element_text(size=11), 
+        axis.title.x=element_text(size=11), axis.title.y=element_text(size=11)) + 
+  theme(legend.text=element_text(size=11), legend.title=element_text(size=11)) +
+  guides(fill="none")
+```
+
+
+### Mitotic count
+
+Statistical tests
+```{r}
+summary(aov(mitotic_count ~ molecular_group, data = data_5a))[[1]][1,5] 
+
+t.test(data_5a$mitotic_count[which(data_5a$molecular_group %in% c("Ca A1", "Ca A2"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca A1", "Ca A2"))], alternative = "two.sided") 
+t.test(data_5a$mitotic_count[which(data_5a$molecular_group %in% c("Ca A1", "Ca B"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca A1", "Ca B"))], alternative = "two.sided") 
+t.test(data_5a$mitotic_count[which(data_5a$molecular_group %in% c("Ca A1", "sc-enriched"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca A1", "sc-enriched"))], alternative = "two.sided") 
+t.test(data_5a$mitotic_count[which(data_5a$molecular_group %in% c("Ca A2", "Ca B"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca A2", "Ca B"))], alternative = "two.sided") 
+t.test(data_5a$mitotic_count[which(data_5a$molecular_group %in% c("Ca A2", "sc-enriched"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca A2", "sc-enriched"))], alternative = "two.sided") 
+t.test(data_5a$mitotic_count[which(data_5a$molecular_group %in% c("Ca B", "sc-enriched"))] ~ 
+         data_5a$molecular_group[which(data_5a$molecular_group %in% c("Ca B", "sc-enriched"))], alternative = "two.sided") 
+```
+
+
+Plot
+```{r}
+ggplot(data=data_5a, aes(x=molecular_group, y=mitotic_count, fill=molecular_group)) +
+  geom_violin(scale = "width") + 
+  geom_boxplot(fill="white", width=0.1, outlier.size = 0.4) +
+  geom_quasirandom(shape=21, col="white",data=data_5a %>% filter(molecular_group =="sc-enriched")) +
+  scale_fill_manual(name = "Molecular group", values=c(arc4)) +
+  geom_hline(yintercept = 10, linetype="dashed") +
+  theme_classic() + ylab("Mean mitotic count") + xlab("Molecular group") +
+  theme(legend.position = "bottom") +
+  scale_y_continuous(breaks = c(0,10,20), limits=c(0,22)) +
+  guides(color=guide_legend(nrow=1,byrow=TRUE)) + 
+  geom_text(aes(label = "P value = 2.4 x10-07, ANOVA", y = 22, x=2)) +
+  geom_segment(aes(x=1,xend=3,y=20,yend=20)) + geom_text(aes(label = "*", y = 20.5, x=2)) +
+  theme(axis.text.y=element_text(size=11), axis.text.x=element_text(size=11), 
+        axis.title.x=element_text(size=11), axis.title.y=element_text(size=11)) + 
+  theme(legend.text=element_text(size=11), legend.title=element_text(size=11)) +
+  guides(fill="none")
+```
+
