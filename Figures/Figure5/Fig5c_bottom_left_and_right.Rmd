@@ -1,0 +1,115 @@
+---
+title: "Fig. 5c bottom left and right panels"
+author: "Alexandra Sexton-Oates"
+date: "08/08/2025"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+#### Load libraries
+```{r}
+library(openxlsx)
+library(ggplot2)
+library(tidyr)
+library(patchwork)
+```
+
+
+### Figure 5c bottom left
+
+#### Read data
+```{r}
+passages <- read.xlsx("Data_Figure_5c_bottom_left.xlsx")
+
+passages$sample <- factor(passages$sample, levels=c("LNET6", "LNET13", "LNET14", "LNET24", "LNET5", "LNET10", "LNET16", "LNET18"))
+```
+
+#### Plot
+```{r}
+ggplot(passages, aes(x=Days, y=Passage, col=sample)) + geom_line(aes(size=sample)) + theme_classic() + 
+  scale_color_manual(values=c("#9DB802", "#9DB802", "#9DB802", "#9DB802", "#025B0E", "#CC6677", "#025B0E", "#025B0E")) +
+  scale_y_continuous(breaks = c(4,8,12)) +
+  scale_x_continuous(breaks = c(100,200,300,400,500)) +
+  scale_size_manual(values = c(0.5,0.5,0.5,0.5,0.5,1,0.5,0.5)) + 
+  theme(legend.position="none") +
+  theme(axis.text.y=element_text(size=11), axis.text.x=element_text(size=11), 
+        axis.title.x=element_text(size=11), axis.title.y=element_text(size=11))
+```
+
+
+### Figure 5c bottom right 
+
+#### Read datasets
+```{r}
+props_small <- read.xlsx("Data_Figure_5c_bottom_right_A.xlsx")
+table_S1 <- read.xlsx("Supplementary_Table_S1.xlsx", startRow = 4)
+table_S9 <- read.xlsx("Supplementary_Table_S9.xlsx", startRow = 4)
+```
+
+#### Format datasets
+
+Central panel
+```{r}
+props_small$sum <- rowSums(props_small[,c(2:6)])
+props_small <- props_small %>% gather(type, proportion, c(2:6))
+props_small$proportion_adj <- props_small$proportion/props_small$sum
+props_small$time <- ifelse(props_small$Sample=="LNET10T", 1, ifelse(props_small$Sample=="LNET10Tp4", 2, 3))
+props_small$type <- factor(props_small$type, levels=c("Club","Neuroendocrine.CALCA.","Lower.Airway.Progenitor","Neuroendocrine.NEUROD1.","NE.early.1"))
+```
+
+Left and right panels
+```{r}
+props_full <- merge(table_S1[,c(1,13,47)], table_S9[,c(1,64,66,68,70,71)], by.x="sample.id", by.y="sample.id")
+props_full <- props_full[!(is.na(props_full$music.Lower.Airway.Progenitor)), ]
+
+NET <- as.data.frame(colMeans(props_full[which(props_full$`LNET.k.=.4.archetype`%in%c("Ca A1","Ca A2","Ca B")),c(4:8)]))
+NET$type <- rownames(NET)
+NET$group <- "lungNET"
+colnames(NET)[1] <- "proportion"
+rownames(NET) <- NULL 
+NET$sum <- sum(NET$proportion)
+
+sc  <- as.data.frame(colMeans(props_full[which(props_full$`LNET.k.=.4.archetype`=="sc-enriched"),c(4:8)]))
+sc$type <- rownames(sc)
+sc$group <- "sc-enriched"
+colnames(sc)[1] <- "proportion"
+rownames(sc) <- NULL 
+sc$sum <- sum(sc$proportion)
+
+LCNEC  <- as.data.frame(colMeans(props_full[which(props_full$type=="LCNEC"),c(4:8)]))
+LCNEC$type <- rownames(LCNEC)
+LCNEC$group <- "LCNEC"
+colnames(LCNEC)[1] <- "proportion"
+rownames(LCNEC) <- NULL 
+LCNEC$sum <- sum(LCNEC$proportion)
+
+props_full_plot <- rbind(rbind(NET, sc), LCNEC)
+props_full_plot$proportion_adj <- props_full_plot$proportion/props_full_plot$sum
+props_full_plot$type <- factor(props_full_plot$type, levels=c("music.Club","music.Neuroendocrine.CALCA+","music.Lower.Airway.Progenitor","music.Neuroendocrine.NEUROD1+","music.NE.early.1"))
+props_full_plot$group <- factor(props_full_plot$group, levels=c("lungNET", "sc-enriched", "LCNEC"))
+```
+
+#### Plot
+```{r}
+p1 <- ggplot(props_full_plot[which(props_full_plot$group %in% c("lungNET", "sc-enriched")),], aes(x=group, y=proportion_adj, fill=type)) + 
+  geom_bar(position="stack", stat="identity") + theme_classic() + 
+  scale_fill_manual(values=c("#1154ff", "#c87137", "#722200", "#ff9955", "#cc6677" )) +
+  theme(legend.position = "none")
+
+p2 <- ggplot(props_small, aes(x=time, y=proportion_adj, fill=type)) + 
+  geom_area() + scale_x_continuous(breaks = c(1,2,3)) + 
+  theme_classic() + 
+  scale_fill_manual(values=c("#1154ff", "#c87137", "#722200", "#ff9955", "#cc6677" )) +
+  theme(legend.position = "none")
+
+p3 <- ggplot(props_full_plot[which(props_full_plot$group == "LCNEC"),], aes(x=group, y=proportion_adj, fill=type)) + 
+  geom_bar(position="stack", stat="identity") + theme_classic() + 
+  scale_fill_manual(values=c("#1154ff", "#c87137", "#722200", "#ff9955", "#cc6677" )) +
+  theme(legend.position = "right")
+
+patchwork <- p1+p2+p3 + plot_layout(widths = c(8,11.2,4))
+patchwork
+```
