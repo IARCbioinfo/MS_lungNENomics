@@ -132,8 +132,8 @@ oncoplot_temp2$ERG <- sapply(oncoplot_temp2$sample_id, function(x) if(x %in% sam
 
 ### Draw oncoplots
 
-Extended Data Figure 2c 
-```{r}
+#### Extended Data Figure 2c 
+```{r, fig.height=12, fig.height=10}
 var_cli <- Table_S1[which(Table_S1$cohort.LNET=="TRUE" & grepl("WGS", Table_S1$omics.group)),]
 var_cli <- var_cli[,c(1,13,24,26,27,47)]
 colnames(var_cli) <- c("sample_id", "type", "sex", "age", "location", "molecular_group")
@@ -197,8 +197,8 @@ patchwork <- p2/p1 + plot_layout(heights=c(0.3,1)) + plot_annotation(tag_levels 
 patchwork
 ```
 
-Figure 2d 
-```{r}
+#### Figure 2d 
+```{r, fig.height=12, fig.height=6}
 oncoplot <- oncoplot_temp2 %>% dplyr::select(sample_id, MEN1, ARID1A, EIF1AX, ATM, `HLA-C`, `HLA-A`, ASXL1, BRAF, CLIP1, SGK1, `del_11q13.1`,
                 WGD, shattered_regions, ERG, group)
 rownames(oncoplot) <- NULL
