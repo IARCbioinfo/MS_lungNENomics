@@ -197,7 +197,7 @@ patchwork <- p2/p1 + plot_layout(heights=c(0.3,1)) + plot_annotation(tag_levels 
 patchwork
 ```
 
-#### Figure 2d 
+#### Figure 2b
 ```{r, fig.height=12, fig.height=6}
 oncoplot <- oncoplot_temp2 %>% dplyr::select(sample_id, MEN1, ARID1A, EIF1AX, ATM, `HLA-C`, `HLA-A`, ASXL1, BRAF, CLIP1, SGK1, `del_11q13.1`,
                 WGD, shattered_regions, ERG, group)
@@ -260,7 +260,7 @@ ggplot(oncoplot.barplot,aes(y=Feature,x=n/102*100,fill=molecular_group)) + geom_
   scale_fill_manual(values=c("Ca A1"="#999933", "Ca A2"="#DDCC77", "Ca B"="#117733", "sc-enriched"="#CC6677")) + theme_classic() + coord_cartesian(expand = F)
 ```
 
-Extended Data Figure 2e
+#### Extended Data Figure 2e
 ```{r}
 summary_events <- oncoplot_temp2
 
