@@ -1,0 +1,58 @@
+---
+title: "Extended Data Figure 3e"
+author: "Emilie Matthian, Alexandra Sexton-Oates"
+date: "2025-08-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+#### Load library
+```{r}
+library(ggplot2)
+```
+
+#### Load data
+```{r}
+load("HC_sc.RData")
+```
+
+#### Set colours 
+```{r}
+colour_hallmark <- c("EVADING GROWTH SUPPRESSORS"="#794A1E", "EVADING IMMUNE DESTRUCTION"="#D13995", "GENOME INSTABILITY"="#204393", "REPLICATIVE IMMORTALITY"="#0B7DB0",
+                     "REPROGRAMMING ENERGY METABOLISM"="#7F4097", "RESISTING CELL DEATH"="#a4a4a4", "SUSTAINED ANGIOGENESIS"="#EE3D33", "SUSTAINING PROLIFERATIVE SIGNALING"= "#079E58",
+                     "TISSUE INVASION AND METASTASIS"="#221E20", "TUMOR-PROMOTING INFLAMMATION"= "#DD7A26")
+```
+
+#### Set order
+```{r}
+HC_sc$hallmark_name <- factor(HC_sc$hallmark_name, levels=c("EVADING GROWTH SUPPRESSORS", "EVADING IMMUNE DESTRUCTION", "REPLICATIVE IMMORTALITY", "TUMOR-PROMOTING INFLAMMATION", "TISSUE INVASION AND METASTASIS", "SUSTAINED ANGIOGENESIS", "GENOME INSTABILITY", "RESISTING CELL DEATH", "REPROGRAMMING ENERGY METABOLISM", "SUSTAINING PROLIFERATIVE SIGNALING"))
+```
+
+#### Set name of hallmarks for plot
+```{r}
+hallmark_name_format <- c("Suppression \n of growth", "Escaping immune \n response \n to cancer", "Genome instability \n and mutations", "Cell replicative \n immortality", "Change of \n cellular \n energetics", "Escaping \n programmed \n cell death", "Angiogenesis", "Proliferative \n signalling", "Invasion and \n metastasis", "Tumour promoting \n inflammation")
+```
+
+#### Plot 
+```{r}
+ggplot(HC_sc, aes(x = hallmark_name, y = A, fill = hallmark_name)) +  
+  geom_col(position = "identity") +
+  geom_text(aes(label = A), color = "white", position = position_stack(vjust = 0.5)) +
+  geom_text(aes(label = signif), color = "black", fontface = "bold", position = position_stack(vjust = 1.2, reverse = TRUE), size = 10) +
+  scale_fill_manual(values = colour_hallmark) +
+  coord_polar(start = 0) +  
+  ylim(-700, 500) +
+  theme_minimal() +
+  theme(legend.position = "none", axis.text.x = element_blank(), axis.text.y = element_blank(), axis.ticks.x = element_blank(), axis.ticks.y = element_blank(),
+    axis.title = element_blank(), legend.title = element_blank(), panel.grid.minor = element_line(color = "white", size = 0.5), panel.grid.major = element_line(color = "white", size = 0.5)) +
+  guides(fill = guide_legend(nrow = 5, byrow = TRUE)) +
+  geom_text(aes(y =  A + 250, label = hallmark_name_format), color = c("#794A1E", "#D13995", "#204393", "#0B7DB0", "#7F4097", "#a4a4a4", "#EE3D33", "#079E58" ,"#221E20", "#DD7A26"), size = 4, hjust = 0.5, angle = 0) +
+  geom_text(aes(y = A + 20, label = top_gene), position = position_stack(vjust = -1), size = 3, color = c("#794A1E", "#D13995", "#204393", "#0B7DB0", "#7F4097", "#a4a4a4", "#EE3D33", "#079E58" ,"#221E20", "#DD7A26"))
+```
+
+
+
+
