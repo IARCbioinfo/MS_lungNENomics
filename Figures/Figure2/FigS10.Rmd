@@ -1,6 +1,6 @@
 ---
-title: "Fig2B"
-author: "E. Mathian, A. Sexton-Oates and N. Alcala"
+title: "FigS10"
+author: "E. Mathian, A. Sexton-Oates, and N. Alcala"
 date: "`r Sys.Date()`"
 output: html_document
 ---
@@ -9,9 +9,9 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Figure 2 panel B: Driver mutations associated with archetypes or types - oncoplot
+# Figure 10: Driver alterations and large genomic events associated with archetypes or types
 
-This document produces panel B from Figure 2 from the lungNENomics manuscript, which displays the oncoplot of driver genomic alterations.
+This document produces data used to generate panel B from Figure 2 and panels B and C from Extended Data Figure 2 from the lungNENomics manuscript, which displays the oncoplot of driver genomic alterations. It generates Fig. S10, Table S17 with shattered regions, and Table S24 with variants within epigenetic regulatory genes, and performs association tests between groups and types and the different alterations. It also checks for the presence of germline variants in driver genes.
 
 # Load files
 ## Load libraries
@@ -39,12 +39,13 @@ var_cli = bind_rows(var_LNET, Attributes %>% filter(Histopathology_simplified%in
 var_cli = bind_rows(var_cli,tibble(sample_id=c("LCNEC3T","LCNEC4T"),group="LCNEC") )
 ```
 
+We load driver small variants and structural variants along with lists of driver small variants from the Intogen method.
 ```{r}
-drivers <- read.table(file="/data/lungNENomics/work/Descriptive_manuscript_data/WGS_data/drivers_final.tsv", header=TRUE)
+drivers <- read.table(file="/data/lungNENomics/work/Descriptive_manuscript_data/WGS_data/drivers_final.tsv", header=TRUE) #intogen driver data presented in Table S23
 driver_table <- data.frame("gene_name" = sort(unique(drivers$SYMBOL)))
 
-load("/data/lungNENomics/work/Descriptive_manuscript_data/WGS_data/dataset_snv_dmg_lungNENomicsCombined.RData") # SNV data
-load("/data/lungNENomics/work/Descriptive_manuscript_data/WGS_data/dataset_sv_dmg_lungNENomicsCombined.RData") # SV data
+load("/data/lungNENomics/work/Descriptive_manuscript_data/WGS_data/dataset_snv_dmg_lungNENomicsCombined.RData") # SNV data presented in Table S15
+load("/data/lungNENomics/work/Descriptive_manuscript_data/WGS_data/dataset_sv_dmg_lungNENomicsCombined.RData") # SV data presented in Table S16
 load("/data/lungNENomics/work/Descriptive_manuscript_data/RNA_sequencing_data/gene_TPM_matrix_PCA_LCNEC_SCLC_ITH_TR.RData") # TPM data
 load("/data/lungNENomics/work/Descriptive_manuscript_data/gencode_hg38_v33.RData") # reference genome
 load("/data/lungNENomics/work/Descriptive_manuscript_data/MOFA/MOFA.Exp.Meth.Alt.CNV_lungNENomicsCombined/ParetoTI/variables_archetypes_MOFA_LNET.RData")
@@ -180,7 +181,7 @@ m_snv_clin <- data.frame(m_snv_clin[,-1],row.names=m_snv_clin[,1])
 ```
 
 
-# Associations with clinical data or archetypes
+# Test associations with clinical data or archetypes
 ```{r}
 pDriver <- data.frame()
 for(j in 1:10){
@@ -241,12 +242,10 @@ table(m_snv_clin$MEN1, m_snv_clin$recurrence)
 # BRAF in sc-enriched 
 ```
 
-## Oncoplot
 
-Include archetype to set order, then delete the archetype column and make a second that is just clinical information in the same sample order
 ```{r}
+# Include archetype to set order, then delete the archetype column and make a second that is just clinical information in the same sample order
 table(dataset_snv_driver$Variant_Label)
-
 genes_frequency <- as.data.frame(sort(unique(dataset_snv_driver$gene1_name)))
 colnames(genes_frequency) <- "gene1_name"
 genes_frequency$samples <- sapply(genes_frequency$gene1_name, function(x) paste0(dataset_snv_driver$sample_id[which(dataset_snv_driver$gene1_name==x)], collapse = ";"))
@@ -258,63 +257,10 @@ dataset_snv_driver[c("460","461"),20] <- "Multi Hit"
 
 oncoplot_temp <- dataset_snv_driver[,c(2,26,20)]
 oncoplot_temp <- oncoplot_temp[!(duplicated(oncoplot_temp)),] # Remove rows which correspond to a sample having multiple entries for the same gene (all labelled multi hit)
-
 rownames(oncoplot_temp) <- NULL
 oncoplot_temp <- oncoplot_temp %>% pivot_wider(names_from = gene1_name, values_from = Variant_Label)
-oncoplot_temp[is.na(oncoplot_temp)] <- "WT"
-oncoplot_temp <- as.data.frame(oncoplot_temp)
-oncoplot_temp <- merge(oncoplot_temp, var_cli[,c("sample_id","group")], by="sample_id", all.x=TRUE)
-
-genes_frequency <- genes_frequency[order(genes_frequency$length_unique, decreasing=TRUE),]
-gene_order <- as.character(genes_frequency$gene1_name)
-gene_order <- c("MEN1", "ARID1A", "EIF1AX", "ATM", "HLA-C", "HLA-A", "ASXL1", "BRAF", "CLIP1", "SGK1") # re-order those with two mutations to make more sense
-col_order <- c(gene_order)
-col_order <- rev(col_order)
-
-oncoplot <- arrange(oncoplot_temp, MEN1, ARID1A, EIF1AX, ATM, "HLA-C", "HLA-A", ASXL1,  BRAF, CLIP1, SGK1, group)
-rownames(oncoplot) <- NULL
-sample_order <- oncoplot$sample_id # Set sample order
-
-oncoplot <- oncoplot[,-12] # remove archetype column 
-oncoplot <- oncoplot %>% gather(Feature, Value, c(2:11)) # Make wide dataframe long for plotting
-oncoplot$sample_id <- factor(oncoplot$sample_id, levels=sample_order) # set the sample order correctly for plotting
-oncoplot$Feature <- factor(oncoplot$Feature, levels=col_order) # Set the order of the features for plotting
-
-colors_snv <- c("Frame Shift Indel"="#1965B0","Missense"= "#4EB265","Multi Hit"="#882E72", "Nonsense"="#DC050C","Splice Site"="#F7F056","WT"="white") 
-
-
-p1 <- ggplot(oncoplot, aes(sample_id, Feature, fill=Value)) + 
-  geom_tile(color="white") + # previous colour: #E7E7E7
-  scale_fill_manual(name = "Features", values = colors_snv, limits = names(colors_snv)) +
-  xlab(label = "Samples") + ylab(label = "IntOGen LNET drivers") + theme_classic() + theme(axis.text.y = element_text(face = "italic")) +
-  theme(axis.text.x=element_blank(),axis.ticks.x=element_blank()) + theme(legend.position = "bottom")
-
-clinplot <- var_cli[,c("sample_id","group","type","sex_inferred","age_cat","location")]
-clinplot <- clinplot[which(clinplot$sample_id %in% sample_order),]
-colnames(clinplot)[2:6] <- c("Archetype", "Type", "Sex", "Age", "Location")  
-clinplot$Sex <- ifelse(clinplot$Sex=="M", "Male","Female")
-clinplot$Location <- ifelse(clinplot$Location=="proximal","Proximal", ifelse(clinplot$Location=="distal","Distal",NA))
-clinplot <- clinplot %>% gather(Feature, Value, c(2:6)) # Make wide dataframe long for plotting
-clinplot$sample_id <- factor(clinplot$sample_id, levels=sample_order) # set the sample order correctly for plotting
-clinplot$Feature <- factor(clinplot$Feature, levels=c("Archetype","Type","Sex","Age","Location"))
-
-colors_clin <- c("Proximal"="#999933", "Distal"="#AA4499", 
-                 "(15.9,40.7]"="#feda8b", "(40.7,65.3]"="#f67e4b", "(65.3,90.1]"="#A50026", 
-                 "Male"="#364B9A", "Female"="#A50026", 
-                 "Typical"="#9DB802","Atypical"="#025B0E","Carcinoid"="#CEDB80",
-                 "Ca A1"="#999933", "Ca A2"="#DDCC77", "Ca B"="#117733", "sc-enriched"="#CC6677") 
-
-p2 <- ggplot(clinplot, aes(sample_id, Feature, fill=Value)) + 
-  geom_tile(color="white") + # previous colour: #E7E7E7
-  scale_fill_manual(name = "Features", values = colors_clin, limits = names(colors_clin), na.value="white") +
-  xlab(label = "") + ylab(label = "Sample features") + theme_classic() +
-  theme(axis.text.x=element_blank(),axis.ticks.x=element_blank()) + theme(legend.position = "top")
-
-
-library(patchwork)
-patchwork <- p2 /p1 + plot_layout(heights=c(0.3,1)) + plot_annotation(tag_levels = list(c('C'))) &  theme(plot.tag = element_text(size = 20)) 
-ggsave(patchwork,file="Oncoplot_drivers_SNVs_archetype.pdf", h=7,w=7)
 ```
+
 
 ## MEN1 alterations analyses
 What proportion of samples have MEN1 deletion, mutation, or both?
@@ -368,54 +314,8 @@ intervar_driver <- intervar[which(intervar$Ref.Gene %in% driver_table$gene_name[
 # LNEN050 (Ca A1) has MEN1 - doesn't have somatic damaging mutation - not the same mutation as any in the dataset_snv_driver table - known NE disorder 
 ```
 
-## Including copy number estimates (PURPLE) 
-```{r}
-# Include archetype to set order, then delete the archetype column and make a second that is just clinical information in the same sample order
-table(dataset_snv_driver$Variant_Label)
-genes_frequency <- as.data.frame(sort(unique(dataset_snv_driver$gene1_name)))
-colnames(genes_frequency) <- "gene1_name"
-genes_frequency$samples <- sapply(genes_frequency$gene1_name, function(x) paste0(dataset_snv_driver$sample_id[which(dataset_snv_driver$gene1_name==x)], collapse = ";"))
-genes_frequency$length_all <- sapply(genes_frequency$samples, function(x) length(unlist(strsplit(x, ";"))))
-genes_frequency$length_unique <- sapply(genes_frequency$samples, function(x) length(unique(unlist(strsplit(x, ";")))))
-genes_frequency$gene1_name[which(genes_frequency$length_all!=genes_frequency$length_unique)] #  "CLIP1"
-dataset_snv_driver[which(dataset_snv_driver$gene1_name == "CLIP1"),c(2,9,14,16,17,20)]
-dataset_snv_driver[c("460","461"),20] <- "Multi Hit"
 
-oncoplot_temp <- dataset_snv_driver[,c(2,26,20)]
-oncoplot_temp <- oncoplot_temp[!(duplicated(oncoplot_temp)),] # Remove rows which correspond to a sample having multiple entries for the same gene (all labelled multi hit)
-rownames(oncoplot_temp) <- NULL
-oncoplot_temp <- oncoplot_temp %>% pivot_wider(names_from = gene1_name, values_from = Variant_Label)
-```
-
-Add Gistic events
-```{r}
-load("/data/lungNENomics/work/Descriptive_manuscript_data/Copy_number_data/D_cnv_seg_lungNENomicsCombined.RData")
-gistic_events <- read.csv( "/data/lungNENomics/work/Descriptive_manuscript_data/Copy_number_data/gistic_event_table_to_desin_oncoplot.csv")
-dim(gistic_events) # 102 samples
-dim(oncoplot_temp) # 35 samples
-dim(oncoplot_temp[oncoplot_temp$sample_id %in% gistic_events$sample_id, ]) # 35 perfect
-length(setdiff(gistic_events$sample_id, oncoplot_temp$sample_id ))
-dim(merge(oncoplot_temp, gistic_events %>% dplyr::select(-X), by = "sample_id", all.x=TRUE, all.y=TRUE)) # so 102
-
-oncoplot_temp <- merge(oncoplot_temp, gistic_events %>% dplyr::select(-X), by = "sample_id", all.x=TRUE, all.y=TRUE)
-```
-
-Check if all sample out on the 102 now included via the merging of gistic_events are in dim dataset_SNV_dmg, if yes substitute all NA by WT
-```{r}
-dim(dataset_SNV_dmg)
-setdiff(dataset_SNV_dmg$sample_id, gistic_events$sample_id)
-setdiff(gistic_events$sample_id, dataset_SNV_dmg$sample_id)
-oncoplot_temp[is.na(oncoplot_temp)] <- "WT" # sample with no mutation => WT wild type
-
-## Formatting 
-colnames(oncoplot_temp)[12:ncol(oncoplot_temp)]  <- gsub("S","",colnames(oncoplot_temp)[12:ncol(oncoplot_temp)] )
-colnames(oncoplot_temp)[12:ncol(oncoplot_temp)]
-colnames(oncoplot_temp)[12:ncol(oncoplot_temp)] <- c("+7p" , "+14p" , "+5q",  "+5p", "-3p", "-3q", "-11q13.1", "-1p13.3")
-
-gistic_events[gistic_events$sample_id %in% var_cli[var_cli$archetype == "sc-enriched",]$sample_id,]
-```
-
-### Shattered regions
+### Shattered regions (Fig 10 and Table S17)
 We compute the shattered regions using package svpluscnv
 ```{r}
 library(svpluscnv)
@@ -531,7 +431,7 @@ shatt_lungNENomics %>% filter(conf=="HC")
 shatt_lungNENomics = shatt_lungNENomics %>% arrange(sample,chrom,-(n.brk.cnv+n.brk.sv))
 ```
 
-Plot Fig S11 and write results presented in Table S17
+Plot Fig S10 and write results presented in Table S17
 ```{r}
 shatt.tot = shatt
 shatt.tot@regions.summary = lapply(unique(shatt_lungNENomics$sample),function(x) shatt_lungNENomics %>% filter(sample==x) )
@@ -610,7 +510,7 @@ col_order <- rev(col_order)
 ```
 
 # Chromatin remodelling genes analysis
-IMPORTANT NOTE : Goal to create one additional line in the oncoplot to represent sample that have at least one "chromatin remodeling gene" (see table S18)
+IMPORTANT NOTE : Goal to create one additional line in the oncoplot to represent sample that have at least one "chromatin remodeling gene" (see table S24)
 -Of the 426 genes 
 => 55 have at least one sample with a SNV event 
 => 4 have at least one sample with a SV event 
@@ -678,7 +578,7 @@ genes_frequency$gene1_name[which(genes_frequency$length_all!=genes_frequency$len
 ```
 
 
-We do the supplementary Table S18
+We do the supplementary Table S24
 ```{r}
 dataset_snv_chromatin$archetype <-as.factor(dataset_snv_chromatin$archetype)
 
@@ -706,9 +606,9 @@ genes_frequency[genes_frequency$q_value_dist_among_arch <0.05,]
 ## Merge table
 dim(genes_frequency)
 dim(merge(genes_frequency %>% dplyr::select(-samples , -length_all), chromatin_remodelling_gene_list, by.x ="gene1_name", by.y =  "Gene Symbol"))
-table_s18 <- merge(chromatin_remodelling_gene_list,genes_frequency %>% dplyr::select(-samples , -length_all),  by.y ="gene1_name", by.x =  "Gene Symbol")
+table_s24 <- merge(chromatin_remodelling_gene_list,genes_frequency %>% dplyr::select(-samples , -length_all),  by.y ="gene1_name", by.x =  "Gene Symbol")
 
-colnames(table_s18) <- c("Gene Symbol", "Gene name" , "additional function",  "Group" , "Subgroup", "n samples with SNV event",  "n Ca A1 with SNV event", "n Ca A2 with SNV event",                  
+colnames(table_s24) <- c("Gene Symbol", "Gene name" , "additional function",  "Group" , "Subgroup", "n samples with SNV event",  "n Ca A1 with SNV event", "n Ca A2 with SNV event",                  
                         "n Ca B with SNV event"  ,  "n sc-enriched with SNV event" , "Fisher' exact test P value (distribution of SNV event among archetype", "q value")
 ```
 
@@ -775,204 +675,6 @@ oncoplot_temp <- merge(oncoplot_temp, summary_chromatin_remodeling_gene, by="sam
 oncoplot_temp[is.na(oncoplot_temp$Epigenetic.regulatory.genes), ]$Epigenetic.regulatory.genes <- "WT"
 
 oncoplot_temp <- oncoplot_temp[, c(1:(ncol(oncoplot_temp)-2), ncol(oncoplot_temp), (ncol(oncoplot_temp)-1))]
-```
-
-## Draw oncoplots
-```{r}
-oncoplot <- arrange(oncoplot_temp, MEN1, ARID1A, EIF1AX, ATM, "HLA-C", "HLA-A", ASXL1,  BRAF, CLIP1, SGK1, 
-                    "-1p13.3",  "-3p", "-3q",  "+5q",  "+5p", "+7p" , "-11q13.1", "+14p" ,
-                    "WGD", "Shattered regions", "Epigenetic.regulatory.genes", 
-                    group)
-rownames(oncoplot) <- NULL
-oncoplot$group <- factor(oncoplot$group , levels = c("Ca A1", "Ca A2", "Ca B", "sc-enriched"))
-oncoplot <- oncoplot[order(oncoplot$group),]
-
-sample_order <- left_join(oncoplot,var_cli[,c("sample_id","group","type")]) %>% arrange(group,MEN1,ARID1A,EIF1AX,ATM,`HLA-C`,`HLA-A`,ASXL1,BRAF,CLIP1,SGK1,
-                                                                                        `-1p13.3`,  `-3p`, `-3q`,  `+5q`,  `+5p`, `+7p` , `-11q13.1`, `+14p` ,WGD,`Shattered regions`,Epigenetic.regulatory.genes,type) %>% pull(sample_id)#oncoplot$sample_id # Set sample order
-#sample_order <- oncoplot$sample_id # Set sample order
-
-oncoplot <- oncoplot[,-ncol(oncoplot)] # remove archetype column 
-oncoplot <- oncoplot %>% gather(Feature, Value, c(2:ncol(oncoplot))) # Make wide dataframe long for plotting
-oncoplot$sample_id <- factor(oncoplot$sample_id, levels=sample_order) # set the sample order correctly for plotting
-
-gene_order <- c("MEN1", "ARID1A", "EIF1AX", "ATM", "HLA-C", "HLA-A", "ASXL1", "BRAF", "CLIP1", "SGK1") # re-order those with two mutations to make more sense
-gistic_order <- c( "-1p13.3",  "-3p", "-3q",  "+5q",  "+5p", "+7p" , "-11q13.1", "+14p" )
-large_genome_event_order <- c("WGD", "Shattered regions", "Epigenetic.regulatory.genes" )
-col_order <- c(gene_order, gistic_order, large_genome_event_order)
-col_order <- rev(col_order)
-
-oncoplot$Feature <- factor(oncoplot$Feature, levels=col_order) # Set the order of the features for plotting
-
-colors_snv <- c(
-  # IntOGen
-  "Frame Shift Indel"="#1965B0","Missense"= "#4EB265","Multi Hit"="#882E72", "Nonsense"="#DC050C","Splice Site"="#F7F056", "CNV event"="#FF9F00","WT"="white",
-  # Large genomics event
-  "WGD" = "#C4DE54" ,
-  "High confidence" =  "#81031D",
-  "Low confidence" = "#4E156F",
-  "At least one SNV or SV in 49 target genes" =  "#4EC6D0"
-  ) 
-
-p1 <- ggplot(oncoplot, aes(sample_id, Feature, fill=Value)) + 
-  geom_tile(color="white") + # previous colour: #E7E7E7
-  scale_fill_manual(name = "Features", values = colors_snv, limits = names(colors_snv)) +
-  xlab(label = "Samples") + ylab(label = "") + theme_classic() + theme(axis.text.y = element_text(face = "italic")) +
-  theme(axis.text.x=element_blank(),axis.ticks.x=element_blank()) + theme(legend.position = "bottom") + geom_hline(yintercept = c())
-
-clinplot <- var_cli[,c("sample_id","group","type","sex_inferred","age_cat","location")]
-clinplot <- clinplot[which(clinplot$sample_id %in% sample_order),]
-colnames(clinplot)[2:6] <- c("Archetype", "Type", "Sex", "Age", "Location")  
-clinplot$Sex <- ifelse(clinplot$Sex=="M", "Male","Female")
-clinplot$Location <- ifelse(clinplot$Location=="proximal","Proximal", ifelse(clinplot$Location=="distal","Distal",NA))
-clinplot <- clinplot %>% gather(Feature, Value, c(2:6)) # Make wide dataframe long for plotting
-clinplot$sample_id <- factor(clinplot$sample_id, levels=sample_order) # set the sample order correctly for plotting
-clinplot$Feature <- factor(clinplot$Feature, levels=c("Archetype","Type","Sex","Age","Location"))
-
-colors_clin <- c("Proximal"="#999933", "Distal"="#AA4499", 
-                 "(15.9,40.7]"="#feda8b", "(40.7,65.3]"="#f67e4b", "(65.3,90.1]"="#A50026", 
-                 "Male"="#364B9A", "Female"="#A50026", 
-                 "Typical"="#9DB802","Atypical"="#025B0E","Carcinoid"="#CEDB80",
-                 "Ca A1"="#999933", "Ca A2"="#DDCC77", "Ca B"="#117733", "sc-enriched"="#CC6677") 
-
-p2 <- ggplot(clinplot, aes(sample_id, Feature, fill=Value)) + 
-  geom_tile(color="white") + # previous colour: #E7E7E7
-  scale_fill_manual(name = "Features", values = colors_clin, limits = names(colors_clin), na.value="white") +
-  xlab(label = "") + ylab(label = "Sample features") + theme_classic() +
-  theme(axis.text.x=element_blank(),axis.ticks.x=element_blank()) + theme(legend.position = "top")
-
-patchwork <- p2 /p1 + plot_layout(heights=c(0.3,1)) + plot_annotation(tag_levels = list(c('C'))) &  theme(plot.tag = element_text(size = 20)) 
-
-patchwork
-ggsave(patchwork,file="EDFig2c_Oncoplot_drivers_extended_version_row_by_arch.pdf", h=9,w=8)
-ggsave(patchwork,file="EDFig2c_Oncoplot_drivers_extended_version_row_by_arch.svg", h=9,w=8)
-```
-
-## Figure 2C - Draw oncoplot simplified
-```{r}
-oncoplot <- oncoplot_temp %>%
-  dplyr::select(sample_id,MEN1, ARID1A, EIF1AX, ATM, `HLA-C`, `HLA-A`, ASXL1, BRAF, CLIP1, SGK1, 
-         `-11q13.1`,
-         WGD, `Shattered regions`, Epigenetic.regulatory.genes, 
-         group)
-
-rownames(oncoplot) <- NULL
-oncoplot$group <- factor(oncoplot$group , levels = c("Ca A1", "Ca A2", "Ca B", "sc-enriched"))
-oncoplot <- oncoplot[order(oncoplot$group),]
-sample_order <- left_join(oncoplot_temp,var_cli[,c("sample_id","group","type")]) %>% arrange(group,MEN1,`-11q13.1`,ARID1A,EIF1AX,ATM,`HLA-C`,`HLA-A`,ASXL1,BRAF,CLIP1,SGK1,WGD,`Shattered regions`,Epigenetic.regulatory.genes,type) %>% pull(sample_id)#oncoplot$sample_id # Set sample order
-
-oncoplot <- oncoplot[,-ncol(oncoplot)] # remove archetype column 
-oncoplot <- oncoplot %>% gather(Feature, Value, c(2:ncol(oncoplot))) # Make wide dataframe long for plotting
-oncoplot$sample_id <- factor(oncoplot$sample_id, levels=sample_order) # set the sample order correctly for plotting
-
-gene_order <- c("MEN1", "-11q13.1","ARID1A", "EIF1AX", "ATM", "HLA-C", "HLA-A", "ASXL1", "BRAF", "CLIP1", "SGK1") # re-order those with two mutations to make more sense
-large_genome_event_order <- c("WGD", "Shattered regions", "Epigenetic.regulatory.genes" )
-col_order <- c(gene_order, large_genome_event_order)
-col_order <- rev(col_order)
-
-oncoplot$Feature <- factor(oncoplot$Feature, levels=col_order) # Set the order of the features for plotting
-
-colors_snv <- c(
-  # IntOGen
-  "Frame Shift Indel"="#1965B0","Missense"= "#4EB265","Multi Hit"="#882E72", "Nonsense"="#DC050C","Splice Site"="#F7F056", "CNV event"="#FF9F00","WT"="white",
-  # Large genomics event
-  "WGD" = "#C4DE54" ,
-  "High confidence" =  "#81031D",
-  "Low confidence" = "#4E156F",
-  "At least one SNV or SV in 49 target genes" =  "#4EC6D0"
-) 
-
-p1 <- ggplot(oncoplot, aes(sample_id, Feature, fill=Value)) + 
-  geom_tile(color="white") + # previous colour: #E7E7E7
-  scale_fill_manual(name = "Features", values = colors_snv, limits = names(colors_snv)) +
-  xlab(label = "Samples") + ylab(label = "") + theme_classic() + theme(axis.text.y = element_text(face = "italic")) +
-  theme(axis.text.x=element_blank(),axis.ticks.x=element_blank()) + theme(legend.position = "bottom") + 
-  geom_vline(xintercept = c(44,44+29,44+29+24)+0.5,col="black")
-
-clinplot <- var_cli[,c("sample_id","group","type")]
-clinplot <- clinplot[which(clinplot$sample_id %in% sample_order),]
-colnames(clinplot)[2:3] <- c("Archetype", "Type")  
-clinplot <- clinplot %>% gather(Feature, Value, c(2:3)) # Make wide dataframe long for plotting
-clinplot$sample_id <- factor(clinplot$sample_id, levels=sample_order) # set the sample order correctly for plotting
-clinplot$Feature <- factor(clinplot$Feature, levels=c("Type","Archetype"))
-
-colors_clin <- c("Typical"="#9DB802","Atypical"="#025B0E","Carcinoid"="#CEDB80",
-                 "Ca A1"="#999933", "Ca A2"="#DDCC77", "Ca B"="#117733", "sc-enriched"="#CC6677") 
-
-p2 <- ggplot(clinplot, aes(sample_id, Feature, fill=Value)) + 
-  geom_tile(color="white") + # previous colour: #E7E7E7
-  scale_fill_manual(name = "Features", values = colors_clin, limits = names(colors_clin), na.value="white") +
-  xlab(label = "") + ylab(label = "Sample features") + theme_classic() +
-  theme(axis.text.x=element_blank(),axis.ticks.x=element_blank()) + theme(legend.position = "top")
-
-patchwork <- p2 /p1 + plot_layout(heights=c(0.3,1)) + plot_annotation(tag_levels = list(c('b'))) &  theme(plot.tag = element_text(size = 20)) 
-
-
-patchwork
-ggsave(patchwork,file="Figure2B_Oncoplot_drivers_simplified_version_row_by_arch.pdf", h=7,w=9)
-ggsave(patchwork,file="Figure2B_Oncoplot_drivers_simplified_version_row_by_arch.svg", h=7,w=9)
-```
-
-Plot barplot of alterations per group 
-```{r}
-oncoplot.barplot = left_join(oncoplot,var_cli[,c("sample_id","group","type")]) %>% filter(Value!="WT" )%>% group_by(Feature,group) %>% summarize(n=n())
-oncoplot.barplot$Feature = factor(oncoplot.barplot$Feature,col_order)
-
-Fig2b_right = ggplot(oncoplot.barplot,aes(y=Feature,x=n/102*100,fill=group)) + geom_bar(stat="identity",width=0.95,show.legend = F) + 
-  scale_fill_manual(values=arc4) + theme_classic() + coord_cartesian(expand = F)
-
-Fig2b_right
-
-ggsave(Fig2b_right,file="Figure2B_Oncoplot_drivers_simplified_version_row_by_arch_rightbarplot.svg", h=4,w=6)
-```
-
-## Extended Data Fig 2e: proportion of samples by group with a genomic event
-```{r}
-oncoplot_temp$SNV_event_driver_gene <- ifelse(apply(oncoplot_temp[, 2:11], 1, function(x) any(x != "WT")), 1, 0 ) # OK
-oncoplot_temp$CNV_event <- ifelse(apply(oncoplot_temp[, c(12:19)], 1, function(x) any(x != "WT")), 1, 0 )
-oncoplot_temp$WGD_event <- ifelse(oncoplot_temp$WGD != "WT", 1, 0)
-oncoplot_temp$shattered_event <- ifelse(oncoplot_temp$`Shattered regions` != "WT", 1, 0)
-oncoplot_temp$Epigenetic_regulatory_gene_event <- ifelse(oncoplot_temp$Epigenetic.regulatory.genes != "WT", 1, 0)
-
-summary_event <- oncoplot_temp[,c(1,23:28)]
-summary_event$several_events <- ifelse(apply(summary_event[, 3:7], 1, function(x) sum(x) > 1), 1, 0 )
-summary_event$any_events <- ifelse(apply(summary_event[, 3:7], 1, function(x) sum(x) == 0), 1, 0 )
-
-summary_event[summary_event$several_events == 1, 3:7] = 0
-
-head(summary_event)
-
-events_occ <- summary_event %>%
-  group_by(group) %>%
-  summarise(total_cases = n(),
-            SNV_event_driver_gene = sum(SNV_event_driver_gene ),
-            CNV_event  = sum(CNV_event),
-            shattered_event  = sum(shattered_event ),
-            WGD_event = sum(WGD_event ), 
-            Epigenetic_regulatory_gene_event = sum(Epigenetic_regulatory_gene_event),
-            several_events  = sum(several_events ),
-            any_events = sum(any_events))
-
-events_occ[,3:ncol(events_occ)] <- (events_occ[,3:ncol(events_occ)]/events_occ$total_cases) * 100
-
-events_occ_l  <- events_occ %>% dplyr::select(-total_cases) %>%
-    pivot_longer(!group, names_to = "event", values_to = "percentage")
-
-events_occ_l$event <- factor(events_occ_l$event , levels = rev(c("any_events", "SNV_event_driver_gene" , "CNV_event",   "shattered_event" ,  "WGD_event" , "Epigenetic_regulatory_gene_event", "several_events" )))
-
-palette_driver_event <- c("any_events" = "#7d7d7d", "SNV_event_driver_gene" = "#4EB265",   "CNV_event"= "#FF9F00",  
-                          "WGD_event" = "#C4DE54", "shattered_event" = "#81031D",  "Epigenetic_regulatory_gene_event" = "#4EC6D0",   "several_events" = "#DC050C" )
-
-
-plot_e <- ggplot( events_occ_l  , aes(x=group ,y=percentage,fill=event)) + 
-  geom_bar(stat="identity") + theme_classic() + 
-  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1,colour =arc4[(c("Ca A1","Ca A2","Ca B","sc-enriched"))] ),
-        legend.title =  element_blank()) +
-  xlab("") + ylab("% of samples") + scale_fill_manual(values=palette_driver_event, labels = c("any_events" = "None", "SNV_event_driver_gene" = "SNV driver",  "CNV_event" = "CNV driver", "WGD_event" = "WGD", "shattered_event" = "Shattered regions",  "several_events"= "Several events","Epigenetic_regulatory_gene_event"="ER gene variant") )
-
-ggsave(plot_e,filename="EDFig2e_Barplot_percentages_of_sampels_with_imp_genomic_event.pdf", h=3,w=5)
-ggsave(plot_e,filename="EDFig2e_Barplot_percentages_of_sampels_with_imp_genomic_event.svg", h=3,w=5)
-
-plot_e
 ```
 
 # Session info
