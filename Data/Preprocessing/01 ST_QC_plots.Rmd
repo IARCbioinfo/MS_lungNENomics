@@ -1,0 +1,125 @@
+---
+title: "visualize QC nCount_Spatial and nFeature_Spatial"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressMessages({
+  require(Seurat)
+  require(patchwork)
+  require(tidyverse)
+  require(ggpubr)
+  require(data.table)
+  require(copykat)
+  require(matrixStats)
+  require(reticulate)
+})
+
+# samples
+sample_ids = c("LNEN071-IARC-A", "LNEN084-IARC-B", "LNEN107-IARC-C", "LNEN206-IARC-D")
+
+# directories
+ddir = file.path("..", "data", "nicolas_spatial_data")
+rdir = file.path("..", "results")
+```
+
+
+```{r}
+get_bound = function(x, lower = 1, upper = 99){
+  return(c(quantile(x, probs = lower/100, na.rm = FALSE), quantile(x, probs = upper/100, na.rm = FALSE)))
+}
+
+process_ST = function(sample_id, ddir){
+  sample_ddir = file.path(ddir, "LungNENomics-spatialRNAseq", sample_id)
+  adata = Load10X_Spatial(sample_ddir)
+  adata@project.name = sample_id
+  adata$sample_id = sample_id
+  Idents(adata) = sample_id
+  adata = PercentageFeatureSet(adata, pattern = "^MT-", col.name = "percent.mt")
+  adata = PercentageFeatureSet(adata, pattern = "^RP[SL]", col.name = "percent.ribo")
+
+  p_before = wrap_plots(
+      VlnPlot(adata, features = "nCount_Spatial", pt.size = 0.1) + NoLegend() + theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 0, hjust = 0.5)), 
+      SpatialFeaturePlot(adata, features = "nCount_Spatial", alpha = 1,
+  pt.size.factor = 2.5, stroke = 0.25) + theme(legend.position = "right"),
+      VlnPlot(adata, features = "nFeature_Spatial", pt.size = 0.1) + NoLegend() + theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 0, hjust = 0.5)), 
+      SpatialFeaturePlot(adata, features = "nFeature_Spatial", alpha = 1,
+  pt.size.factor = 2.5, stroke = 0.25) + theme(legend.position = "right"),
+      nrow = 1
+    ) +
+    labs(title = sample_id)
+  
+  h = 3
+  w = 14
+  ggsave(p_before, filename = paste0(sample_id, "_QC_before.svg"), height = h, width = w)
+  ggsave(p_before, filename = paste0(sample_id, "_QC_before.pdf"), height = h, width = w)
+  
+  nf_bounds = get_bound(adata$nFeature_Spatial)
+  nf_lower = nf_bounds[1]
+  nf_upper = nf_bounds[2]
+  
+  nc_bounds = get_bound(adata$nCount_Spatial)
+  nc_lower = nc_bounds[1]
+  nc_upper = nc_bounds[2]
+  
+  adata = subset(adata, subset = nFeature_Spatial > nf_lower & nFeature_Spatial < nf_upper &
+                   nCount_Spatial > nc_lower & nCount_Spatial < nc_upper)
+  
+  p_after = wrap_plots(
+      VlnPlot(adata, features = "nCount_Spatial", pt.size = 0.1) + NoLegend() + theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 0, hjust = 0.5)), 
+      SpatialFeaturePlot(adata, features = "nCount_Spatial", alpha = 1,
+  pt.size.factor = 2.5, stroke = 0.25) + theme(legend.position = "right"),
+      VlnPlot(adata, features = "nFeature_Spatial", pt.size = 0.1) + NoLegend() + theme(axis.title.x = element_blank(), axis.text.x = element_text(angle = 0, hjust = 0.5)), 
+      SpatialFeaturePlot(adata, features = "nFeature_Spatial", alpha = 1,
+  pt.size.factor = 2.5, stroke = 0.25) + theme(legend.position = "right"),
+      nrow = 1
+    ) +
+    labs(title = sample_id)
+  
+  
+  ggsave(p_after, filename = paste0(sample_id, "_QC_after.svg"), height = h, width = w)
+  ggsave(p_after, filename = paste0(sample_id, "_QC_after.pdf"), height = h, width = w)
+
+  return(list(p_after = p_after, p_before = p_before))
+  
+}
+ps = lapply(sample_ids, function(sample_id) process_ST(sample_id, ddir))
+```
+
+
+```{r}
+library(ggpubr)
+ps_before = unlist(lapply(ps, function(p) p["p_before"]))
+ps_after = unlist(lapply(ps, function(p) p["p_after"]))
+
+labs = LETTERS[seq_along(ps)]  # "A", "B", "C", ...
+
+P_before = ggarrange(
+  plotlist = ps_before,
+  ncol = 1, nrow = 4,
+  labels = labs,
+  label.x = 0.01,   # left
+  label.y = 0.99,   # top
+  font.label = list(size = 16, face = "bold"),
+  align = "v"
+)
+
+ggsave("QC_merged_before.svg", plot = P_before, width = 14, height = 12)
+ggsave("QC_merged_before.pdf", plot = P_before, width = 14, height = 12)
+
+P_after = ggarrange(
+  plotlist = ps_after,
+  ncol = 1, nrow = 4,
+  labels = labs,
+  label.x = 0.01,   # left
+  label.y = 0.99,   # top
+  font.label = list(size = 16, face = "bold"),
+  align = "v"
+)
+
+ggsave("QC_merged_after.svg", plot = P_after, width = 14, height = 12)
+ggsave("QC_merged_after.pdf", plot = P_after, width = 14, height = 12)
+```
+
