@@ -1,0 +1,146 @@
+---
+title: "01. Infer CNV from Spatial data using copykat"
+
+output: 
+  html_notebook:
+    theme: flatly
+    toc: yes
+    toc_float:
+      collapsed: true
+---
+
+# 0. Intro
+
+This script is used to infer CNV from Spatial data using [copykat](https://github.com/navinlabcode/copykat). The results from copykat were verified with bulk WGS data.
+
+
+# 1. Set up
+
+## 1.1 Load required packages
+```{r, setup: load libraries, message=FALSE}
+suppressMessages({
+  require(Seurat)
+  require(patchwork)
+  require(tidyverse)
+  require(ggpubr)
+  require(data.table)
+  require(copykat)
+  require(matrixStats)
+  require(reticulate)
+})
+```
+
+
+## 1.2 Parameters
+```{r, setup: parameters}
+# samples
+sample_ids = c("LNEN071-IARC-A", "LNEN084-IARC-B", "LNEN107-IARC-C", "LNEN206-IARC-D")
+
+# directories
+ddir = file.path("..", "data", "nicolas_spatial_data")
+rdir = file.path("..", "results")
+```
+
+
+## 1.3 Convert anndata to seurat
+
+```{r}
+adatas = lapply(setNames(sample_ids, sample_ids), function(sample_id){
+  message("processing:", sample_id)
+  f_name = paste0("adata_", sample_id, "_scanpy_06052024")
+  h5ad_f = file.path("..", paste0(f_name, ".h5ad"))
+  # convert h5ad file to seurat
+  sceasy::convertFormat(
+    h5ad_f, from="anndata", to="seurat", outFile=file.path(rdir, paste0(f_name, '.rds'))
+  )
+  adata = readRDS(file.path(rdir, paste0(f_name, '.rds')))
+  
+  # load images in R
+  sample_ddir = file.path(ddir, "LungNENomics-spatialRNAseq", sample_id)
+  adata2 = Load10X_Spatial(sample_ddir)
+  
+  adata@images = adata2@images
+  saveRDS(adata, file = file.path(rdir, paste0(f_name, '.rds')))
+  return(adata)
+})
+```
+
+
+# 2. Infer CNV using copykat
+
+## 2.1 Loat ST data
+```{r}
+adatas = lapply(setNames(sample_ids, sample_ids), function(sample_id){
+  f_name = paste0("adata_", sample_id, "_scanpy_06052024")
+  adata = readRDS(file.path(rdir, paste0(f_name, '.rds')))
+  return(adata)
+})
+```
+
+## 2.2 Infer CNV using copykat
+* "hg20": annotate genes with reference to [hg38](https://github.com/navinlabcode/copykat/blob/e4b27d0592719e5543097da609ac0dc451cf32ab/R/annotateGenes.hg20.R#L12)
+```{r}
+copykats = lapply(setNames(sample_ids, sample_ids), function(sample_id){
+  if(!dir.exists(file.path(rdir, sample_id))) dir.create(rdir, sample_id)
+  
+  adata = adatas[[sample_id]]
+  exp.rawdata = as.matrix(adata@assays$RNA$counts)
+  rownames(exp.rawdata) = rownames(adata)
+  colnames(exp.rawdata) = colnames(adata)
+  copykat_obj = copykat(
+    rawmat=exp.rawdata, 
+    id.type="S", # symbol
+    ngene.chr=5, 
+    win.size=25, 
+    KS.cut=0.2, 
+    sam.name=file.path(rdir, "copykat", sample_id), 
+    distance="euclidean", 
+    norm.cell.names="",
+    plot.genes="TRUE", 
+    genome="hg20",
+    n.cores=6,
+    output.seg= "TRUE")
+  
+  return(copykat_obj)
+})
+save(copykats, file = file.path(rdir, "copykat/copykats_scanpy_06182024.Rdata"))
+```
+
+## 2.3 Tumor cell annotation
+
+```{r}
+adatas = lapply(setNames(sample_ids, sample_ids), function(sample_id){
+  adata = adatas[[sample_id]]
+  copykat_pred = copykats[[sample_id]]$prediction
+  setDT(copykat_pred)
+  copykat_pred = copykat_pred[data.table(cell.names = colnames(adata)), on = .(cell.names)]
+  
+  ggplot(copykat_pred, aes(x = copykat.pred)) +
+    geom_bar(aes(y = after_stat(count / sum(count))), width = 0.5, color = "black", fill = "white") +
+    labs(y = "Proportions", title = paste("copykat prediction of", sample_id), 
+         subtitle = "Not.defineds will be removed",
+         x = "copyKat predictions")+
+    scale_y_continuous(labels = scales::percent) +
+    stat_count(geom = "text", 
+             aes(label = stat(count)),
+             position=position_fill(vjust=1), colour="black") +
+    theme_minimal() +
+    theme(panel.grid.major.x = element_blank())
+  ggsave(file = file.path(rdir, sample_id, "copykat_pred_proportions.png"), height = 3, width = 4)
+  
+  
+  if(all(colnames(adata) == copykat_pred$cell.names)){
+    adata$copykat.pred = copykat_pred$copykat.pred
+    tumor_cells = copykat_pred[copykat.pred=="aneuploid", cell.names]
+    adata$tissue_type_from_copykat = ifelse(colnames(adata) %in% tumor_cells, "Tumor", "Normal")
+  }else{
+    stop("cell names not match")
+  }
+  
+  save(adata, file = file.path(rdir, sample_id, paste0(sample_id, ".Rdata")))
+  return(adata)
+})
+save(adatas, file = file.path(rdir, "adatas_scanpy_copykat_06082024.Rdata"))
+```
+
+
