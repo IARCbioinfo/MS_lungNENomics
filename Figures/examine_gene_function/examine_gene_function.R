@@ -1,7 +1,7 @@
 
 ## Function to compare gene expression between groups and output a violin plot
 
-# Function is called examine_genes
+# Function is called examine_gene
 # Takes two inputs: a gene name (any) and a sample set (one of LNET or LNEN)
 examine_gene("SEZ6", "LNEN") # example
 
