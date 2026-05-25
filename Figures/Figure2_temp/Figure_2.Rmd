@@ -1,0 +1,204 @@
+---
+title: "Figure 2"
+author: "A. Sexton-Oates"
+date: "2026-05-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+
+### Load libraries
+```{r}
+library(openxlsx)
+library(tidyr)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(ggbeeswarm)
+```
+
+### Read data and format 
+```{r}
+table_S1 <- read.xlsx("Supplementary_Table_S1.xlsx", startRow = 4)
+samples <- table_S1$sample.id[which(grepl("Expr", table_S1$omics.group) & table_S1$cohort.LNET=="TRUE")]
+samples_2 <- table_S1$sample.id[which(table_S1$type %in% c("LCNEC","SCLC"))]
+samples <- c(samples, samples_2)
+
+table_S14 <- read.xlsx("Supplementary_Table_S14.xlsx", startRow = 4)
+table_S14 <- table_S14[which(table_S14$sample.id %in% samples), ]
+table_S14 <- table_S14[,c(1,41:71)]
+colnames(table_S14) <- gsub("music.", "", colnames(table_S14))
+for(i in 2:32){
+  table_S14[,i] <- as.numeric(table_S14[,i])
+}
+
+expr_data <- read.xlsx("Data_Figure2c_left.xlsx")
+```
+
+### Create Figure 2a
+```{r}
+music <- table_S14 %>% pivot_longer(cols = `T_conv`:`Neuroendocrine.NEUROD1+`,names_to = "cell_type",values_to = "proportion") %>% 
+  pivot_wider(names_from = sample.id,values_from=proportion)
+
+music.long <- music %>% pivot_longer(cols=LNEN002:LNEN276_TU,names_to = "Sample",values_to = "Proportion",values_drop_na = F)
+music.long$group <- sapply(music.long$Sample, function(x) table_S1$`LNET.k.=.4.archetype`[which(table_S1$sample.id==x)])
+music.long$type <- sapply(music.long$Sample, function(x) table_S1$type[which(table_S1$sample.id==x)])
+music.long$group <- ifelse(is.na(music.long$group), music.long$type, music.long$group)
+music.long <- music.long[,-5]
+
+music.long <- music.long %>% mutate(cell_type_coarse = case_when(str_detect(cell_type,"Neuroendocrine|Lower|Basal|Club|NE|Goblet")~cell_type,
+                                                                str_detect(cell_type,"B|DC|Macrophage|Monocyte|T_|NK|Mast|Myeloid")~"Immune",
+                                                                str_detect(cell_type,"ibro")~"Stromal",
+                                                                str_detect(cell_type,"Multiciliated|Muscle_Airway")~"Other",
+                                                                str_detect(cell_type,"Endothelial|Pericyte|Plasma|ascular|ymphatic")~"Vascular"))
+
+
+table(music.long$cell_type, music.long$cell_type_coarse) # Endothelial_Bronchial is incorrectly grouped as 'Immune' instead of vascular
+music.long$cell_type_coarse[which(music.long$cell_type=="Endothelial_Bronchial")] <- "Vascular"
+
+
+colors_cells = c("Lower.Airway.Progenitor"="#732200ff", "Neuroendocrine.NEUROD1+"= "#ff9955ff", "Neuroendocrine.CALCA+"= "#c87137ff",
+                 "Club"="#1154ffff", Goblet = "#9264ffff", "Basal" = "#2ad4ffff",
+                 "NE.early.1"="#CC6677","NE.early.2"="#deaa87ff",
+                 "Vascular"="#ff8080ff", "Epithelial"="#87deaaff" ,"Immune"="#c837abff", Stromal = "#b7b7c8ff") 
+
+# Ca A1
+celltypesorderA1 <- music.long %>% filter(group=="Ca A1") %>% group_by(cell_type_coarse) %>% summarize(Proportion=median(Proportion,na.rm=T)) %>% arrange(-Proportion) %>% pull(cell_type_coarse)
+
+music.long <- music.long %>% mutate(cell_type_coarse = factor(cell_type_coarse,levels=rev(celltypesorderA1)))
+samplesorder <- music.long %>% arrange(group,desc(cell_type_coarse),Proportion) %>% pull(Sample) %>% unique()
+music.long <- music.long %>% mutate( Sample = factor(Sample,levels=samplesorder))
+
+ggplot(music.long %>% filter(group=="Ca A1"), aes(x=as.numeric(droplevels(Sample)),y=Proportion,fill=cell_type_coarse)) + 
+  geom_bar(position = "stack", stat = "identity", width = 1,col=NA) + xlim(0,109) +
+  scale_fill_manual(values=colors_cells) + scale_color_manual(values=colors_cells) +  
+  theme_classic() + ylab("") + theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank())
+
+# Ca A2
+celltypesorderA2 <- music.long %>% filter(group=="Ca A2") %>% group_by(cell_type_coarse) %>% summarize(Proportion=median(Proportion,na.rm=T)) %>% arrange(-Proportion) %>% pull(cell_type_coarse)
+
+music.long <- music.long %>% mutate(cell_type_coarse = factor(cell_type_coarse,levels=rev(celltypesorderA2)))
+samplesorder <- music.long %>% arrange(group,desc(cell_type_coarse),Proportion) %>% pull(Sample) %>% unique()
+music.long <- music.long %>% mutate( Sample = factor(Sample,levels=samplesorder))
+
+ggplot(music.long %>% filter(group=="Ca A2"), aes(x=as.numeric(droplevels(Sample)),y=Proportion,fill=cell_type_coarse)) + 
+  geom_bar(position = "stack", stat = "identity", width = 1,col=NA) + xlim(0,109) +
+  scale_fill_manual(values=colors_cells) + scale_color_manual(values=colors_cells) +  
+  theme_classic() + ylab("") + theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank())
+
+# Ca B
+celltypesorderB <- music.long %>% filter(group=="Ca B") %>% group_by(cell_type_coarse) %>% summarize(Proportion=median(Proportion,na.rm=T)) %>% arrange(-Proportion) %>% pull(cell_type_coarse)
+
+music.long <- music.long %>% mutate(cell_type_coarse = factor(cell_type_coarse,levels=rev(celltypesorderB)))
+samplesorder <- music.long %>% arrange(group,desc(cell_type_coarse),Proportion) %>% pull(Sample) %>% unique()
+music.long <- music.long %>% mutate( Sample = factor(Sample,levels=samplesorder))
+
+ggplot(music.long %>% filter(group=="Ca B"), aes(x=as.numeric(droplevels(Sample)),y=Proportion,fill=cell_type_coarse)) + 
+  geom_bar(position = "stack", stat = "identity", width = 1,col=NA) + xlim(0,109) +
+  scale_fill_manual(values=colors_cells) + scale_color_manual(values=colors_cells) +  
+  theme_classic() + ylab("") + theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank())
+
+# sc-enriched
+celltypesorderSCE <- music.long %>% filter(group=="sc-enriched") %>% group_by(cell_type_coarse) %>% summarize(Proportion=median(Proportion,na.rm=T)) %>% arrange(-Proportion) %>% pull(cell_type_coarse)
+
+music.long <- music.long %>% mutate(cell_type_coarse = factor(cell_type_coarse,levels=rev(celltypesorderSCE)))
+samplesorder <- music.long %>% arrange(group,desc(cell_type_coarse),Proportion) %>% pull(Sample) %>% unique()
+music.long <- music.long %>% mutate( Sample = factor(Sample,levels=samplesorder))
+
+ggplot(music.long %>% filter(group=="sc-enriched"), aes(x=as.numeric(droplevels(Sample)),y=Proportion,fill=cell_type_coarse)) + 
+  geom_bar(position = "stack", stat = "identity", width = 1,col=NA) + xlim(0,109) +
+  scale_fill_manual(values=colors_cells) + scale_color_manual(values=colors_cells) +  
+  theme_classic() + ylab("") + theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank())
+
+# LCNEC
+celltypesorderL <- music.long %>% filter(group=="LCNEC") %>% group_by(cell_type_coarse) %>% summarize(Proportion=median(Proportion,na.rm=T)) %>% arrange(-Proportion) %>% pull(cell_type_coarse)
+
+music.long <- music.long %>% mutate(cell_type_coarse = factor(cell_type_coarse,levels=rev(celltypesorderL)))
+samplesorder <- music.long %>% arrange(group,desc(cell_type_coarse),Proportion) %>% pull(Sample) %>% unique()
+music.long <- music.long %>% mutate( Sample = factor(Sample,levels=samplesorder))
+
+ggplot(music.long %>% filter(group=="LCNEC"), aes(x=as.numeric(droplevels(Sample)),y=Proportion,fill=cell_type_coarse)) + 
+  geom_bar(position = "stack", stat = "identity", width = 1,col=NA) + xlim(0,109) +
+  scale_fill_manual(values=colors_cells) + scale_color_manual(values=colors_cells) +  
+  theme_classic() + ylab("") + theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank())
+
+# SCLC
+celltypesorderS <- music.long %>% filter(group=="SCLC") %>% group_by(cell_type_coarse) %>% summarize(Proportion=median(Proportion,na.rm=T)) %>% arrange(-Proportion) %>% pull(cell_type_coarse)
+
+music.long <- music.long %>% mutate(cell_type_coarse = factor(cell_type_coarse,levels=rev(celltypesorderS)))
+samplesorder <- music.long %>% arrange(group,desc(cell_type_coarse),Proportion) %>% pull(Sample) %>% unique()
+music.long <- music.long %>% mutate( Sample = factor(Sample,levels=samplesorder))
+
+ggplot(music.long %>% filter(group=="SCLC"), aes(x=as.numeric(droplevels(Sample)),y=Proportion,fill=cell_type_coarse)) + 
+  geom_bar(position = "stack", stat = "identity", width = 1,col=NA) + xlim(0,109) +
+  scale_fill_manual(values=colors_cells) + scale_color_manual(values=colors_cells) +  
+  theme_classic() + ylab("") + theme(axis.text.x = element_blank(),axis.ticks.x = element_blank(),axis.title.x = element_blank())
+```
+
+### Create Figure 2c
+```{r}
+summary(aov(ICAM1_vst ~ archetype_2, data = expr_data[which(!(is.na(expr_data$archetype))),]))[[1]][1,5]
+
+t.test(expr_data$ICAM1_vst[which(expr_data$archetype_2 %in% c("Ca A1", "Ca A2"))] ~ 
+         expr_data$archetype_2[which(expr_data$archetype_2 %in% c("Ca A1", "Ca A2"))], alternative = "two.sided") 
+t.test(expr_data$ICAM1_vst[which(expr_data$archetype_2 %in% c("Ca A1", "Ca B"))] ~ 
+         expr_data$archetype_2[which(expr_data$archetype_2 %in% c("Ca A1", "Ca B"))], alternative = "two.sided") 
+t.test(expr_data$ICAM1_vst[which(expr_data$archetype_2 %in% c("Ca A1", "sc-enriched"))] ~ 
+         expr_data$archetype_2[which(expr_data$archetype_2 %in% c("Ca A1", "sc-enriched"))], alternative = "two.sided") 
+t.test(expr_data$ICAM1_vst[which(expr_data$archetype_2 %in% c("Ca A1", "LCNEC"))] ~ 
+         expr_data$archetype_2[which(expr_data$archetype_2 %in% c("Ca A1", "LCNEC"))], alternative = "two.sided")$p.value 
+t.test(expr_data$ICAM1_vst[which(expr_data$archetype_2 %in% c("Ca A1", "SCLC"))] ~ 
+         expr_data$archetype_2[which(expr_data$archetype_2 %in% c("Ca A1", "SCLC"))], alternative = "two.sided") 
+
+t.test(expr_data$ICAM1_vst[which(expr_data$archetype_2 %in% c("Ca A2", "Ca B"))] ~  
+         expr_data$archetype_2[which(expr_data$archetype_2 %in% c("Ca A2", "Ca B"))], alternative = "two.sided") 
+t.test(expr_data$ICAM1_vst[which(expr_data$archetype_2 %in% c("Ca A2", "sc-enriched"))] ~ 
+         expr_data$archetype_2[which(expr_data$archetype_2 %in% c("Ca A2", "sc-enriched"))], alternative = "two.sided") 
+t.test(expr_data$ICAM1_vst[which(expr_data$archetype_2 %in% c("Ca A2", "LCNEC"))] ~ 
+         expr_data$archetype_2[which(expr_data$archetype_2 %in% c("Ca A2", "LCNEC"))], alternative = "two.sided")$p.value 
+t.test(expr_data$ICAM1_vst[which(expr_data$archetype_2 %in% c("Ca A2", "SCLC"))] ~ 
+         expr_data$archetype_2[which(expr_data$archetype_2 %in% c("Ca A2", "SCLC"))], alternative = "two.sided")
+
+t.test(expr_data$ICAM1_vst[which(expr_data$archetype_2 %in% c("Ca B", "sc-enriched"))] ~ 
+         expr_data$archetype_2[which(expr_data$archetype_2 %in% c("Ca B", "sc-enriched"))], alternative = "two.sided") 
+t.test(expr_data$ICAM1_vst[which(expr_data$archetype_2 %in% c("Ca B", "LCNEC"))] ~ 
+         expr_data$archetype_2[which(expr_data$archetype_2 %in% c("Ca B", "LCNEC"))], alternative = "two.sided") 
+t.test(expr_data$ICAM1_vst[which(expr_data$archetype_2 %in% c("Ca B", "SCLC"))] ~ 
+         expr_data$archetype_2[which(expr_data$archetype_2 %in% c("Ca B", "SCLC"))], alternative = "two.sided") 
+
+t.test(expr_data$ICAM1_vst[which(expr_data$archetype_2 %in% c("sc-enriched", "LCNEC"))] ~ 
+         expr_data$archetype_2[which(expr_data$archetype_2 %in% c("sc-enriched", "LCNEC"))], alternative = "two.sided") 
+t.test(expr_data$ICAM1_vst[which(expr_data$archetype_2 %in% c("sc-enriched", "SCLC"))] ~ 
+         expr_data$archetype_2[which(expr_data$archetype_2 %in% c("sc-enriched", "SCLC"))], alternative = "two.sided") 
+
+t.test(expr_data$ICAM1_vst[which(expr_data$archetype_2 %in% c("LCNEC", "SCLC"))] ~ 
+         expr_data$archetype_2[which(expr_data$archetype_2 %in% c("LCNEC", "SCLC"))], alternative = "two.sided") 
+
+expr_data$archetype_2 <- factor(expr_data$archetype_2, levels=c("Ca A1","Ca A2","Ca B","sc-enriched","LCNEC","SCLC"))
+
+ggplot(expr_data, aes(x=archetype_2, y=ICAM1_log_TPM, fill=archetype_2)) +
+  geom_violin(scale = "width") + 
+  geom_boxplot(fill="white", width=0.1, outlier.size = 0.4) +
+  geom_quasirandom(shape=21, col="white",data=expr_data[which(expr_data$archetype_2=="sc-enriched"),]) +
+  scale_fill_manual(name = "Archetype/Type", values=c("Ca A1"="#999933", "Ca A2"="#DDCC77", "Ca B"="#117733", "sc-enriched"="#CC6677", "LCNEC"="#882255", "SCLC"="#332288")) +
+  geom_hline(yintercept = log10(1+1), linetype="dashed") +
+  theme_classic() + ylab("ICAM1 expression (log10(tpm + 1))") + xlab("Molecular group/Type") + 
+  theme(legend.position = "bottom") +
+  scale_y_continuous(breaks = c(0,1,2,3), limits=c(0,4.5)) +
+  guides(color=guide_legend(nrow=1,byrow=TRUE)) + 
+  geom_segment(aes(x=1,xend=4,y=3,yend=3)) +  geom_text(aes(label = "***", y = 3.1, x=2.5)) +
+  geom_segment(aes(x=2,xend=4,y=3.3,yend=3.3)) +  geom_text(aes(label = "***", y = 3.4, x=3)) +
+  geom_segment(aes(x=3,xend=4,y=3.6,yend=3.6)) +  geom_text(aes(label = "***", y = 3.7, x=3.5)) +
+  geom_segment(aes(x=5,xend=4,y=3.9,yend=3.9)) +  geom_text(aes(label = "***", y = 4, x=4.5)) +
+  geom_segment(aes(x=6,xend=4,y=4.2,yend=4.2)) +  geom_text(aes(label = "***", y = 4.3, x=5)) +
+  geom_text(aes(label = "P value = 6.02 x10-16, ANOVA", y = 4.5, x=2)) +
+  theme(axis.text.y=element_text(size=11), axis.text.x=element_text(size=11), 
+        axis.title.x=element_text(size=11), axis.title.y=element_text(size=11)) + 
+  theme(legend.text=element_text(size=11), legend.title=element_text(size=11)) +
+  guides(fill="none")
+```
+
+
