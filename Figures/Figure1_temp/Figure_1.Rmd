@@ -1,11 +1,11 @@
 ---
-  title: "Fig. 1a,b,c,d,e"
-author: "Alexandra Sexton-Oates"
-date: "2026-05-22"
+title: "Figure 1"
+author: "A. Sexton-Oates"
+date: "2026-05-25"
 output: html_document
 ---
-  
-  ```{r setup, include=FALSE}
+
+```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
 ```
 
@@ -188,6 +188,7 @@ ggplot(plot_df_1e, aes(x=Var1,y=Freq,fill=Var2)) +
   scale_fill_manual(values=immarc6) + ylab("Proportion")
 
 ```
+
 ### Create Figure 1f
 
 ### Create Figure 1g
