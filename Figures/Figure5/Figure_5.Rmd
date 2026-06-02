@@ -1,13 +1,27 @@
 
+---
+title: "Figure 5"
+author: "N. Alcala & A. Sexton-Oates"
+date: "2026-06-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+### Load libraries
+```{r}
 library(openxlsx)
 library(ggplot2)
 library(patchwork)
 library(tidyr)
 library(dplyr)
 library(ggbeeswarm)
+```
 
-# Load data 
-
+### Read data and format 
+```{r}
 table_S1 <- read.xlsx("Supplementary_Table_S1.xlsx", startRow = 4)
 table_S1 <- table_S1[!(is.na(table_S1$`LNET.k.=.4.archetype`)), ]
 
@@ -20,10 +34,10 @@ for(i in 2:10){
 }
 table_S8$SNVB <- table_S8$SBSB + table_S8$IDB # Add the number of SNVs and Indels together
 table_S8$TMB <- log10(table_S8$SNVB+1) # Take the log10+1 of the small variant combined burden for statistics
+```
 
-
-
-# Create Figure 5a
+### Create Figure 5a
+```{r}
 plot_A <- as.data.frame(round(prop.table(table(table_S1$`LNET.k.=.4.archetype`, table_S1$type), margin=1), digits=2))
 
 plot_B <- as.data.frame(round(prop.table(table(table_S1$`LNET.k.=.4.archetype`, table_S1$`sex.(omics.data.inferred)`), margin=1), digits=2))
@@ -79,8 +93,10 @@ ggplot(plot_5a, aes(x=Var2, y=Var1, colour=Var2, size=Freq)) +
   geom_point(data=plot_5a[35,], pch=21, fill=NA, size=14*plot_5a[35,3], colour="black", stroke=1) +
   
   labs(x="", y="Molecular group")
+```
 
-# Create Figure 5b
+### Create Figure 5b
+```{r}
 table_S1$smoking_2 <- ifelse(table_S1$smoking %in% c("current", "former"), "ever", table_S1$smoking)
 
 smoking_data <- table_S1[which(table_S1$type %in% c("Typical","Atypical")),c(1,13,46,60)]
@@ -122,11 +138,14 @@ p5b_2 <- ggplot(table_v2, aes(x=group,y=mle,col=group)) + geom_point(show.legend
 
 patchwork <- p5b_1 + p5b_2
 patchwork
+```
 
+### Create Figure 5c
+```{r}
+```
 
-# Create Figure 5c
-
-# Create Figure 5d
+### Create Figure 5d
+```{r}
 table_S14 <- table_S14[which(table_S14$sample.id %in% table_S1$sample.id[which(table_S1$cohort.LNET=="TRUE")]), ]
 table_S14 <- table_S14[,c(1:11)]
 colnames(table_S14) <- gsub("quantiseq.", "", colnames(table_S14))
@@ -182,9 +201,10 @@ p5d_4 <- ggplot(quantiseq.long %>% filter(group=="sc-enriched"), aes(fill = Cell
 
 patchwork <- p5d_1 + p5d_2 + p5d_3 + p5d_4 + plot_layout(ncol=4)
 patchwork
+```
 
-
-# Create Figure 5e
+### Create Figure 5e
+```{r}
 table_S8$archetype <- sapply(table_S8$sample_id, function(x) table_S1$`LNET.k.=.4.archetype`[which(table_S1$sample.id==x)])
 table_S8$type <- sapply(table_S8$sample_id, function(x) table_S1$type[which(table_S1$sample.id==x)])
 table_S8$type <- factor(table_S8$type, levels=c("Typical","Carcinoid","Atypical"))
@@ -231,7 +251,7 @@ ggplot(data=table_S8[which(table_S8$wholeGenomeDuplication=="FALSE"),], aes(x=ty
   theme_classic() + ylab("Proportion genome deleted") + 
   theme(legend.position = "bottom") + ylim(c(0,0.41)) + 
   guides(color=guide_legend(nrow=1,byrow=TRUE)) 
-
+```
 
 
 
