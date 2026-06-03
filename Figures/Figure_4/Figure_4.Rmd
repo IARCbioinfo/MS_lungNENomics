@@ -39,8 +39,11 @@ ggplot(passages, aes(x=Days, y=Passage, col=sample)) + geom_line(aes(size=sample
         axis.title.x=element_text(size=11), axis.title.y=element_text(size=11))
 ```
 
+### Create Figure 4a bottom middle
+```{r}
+```
 
-### Figure 4a bottom right 
+### Create Figure 4a bottom right 
 
 Read datasets
 ```{r}
