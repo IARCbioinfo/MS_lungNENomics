@@ -43,8 +43,6 @@ Table_S29 <- read.xlsx("Supplementary_Table_S29.xlsx", startRow = 3) # List of e
 Table_S29 <- Table_S29[which(Table_S29$TPM.filter.pass=="YES"), ] # keep only genes which pass TPM filter 
 ```
 
-### Create Figure 3a
-
 ### Create Figure 3b
 
 Build oncoplot dataframe 
