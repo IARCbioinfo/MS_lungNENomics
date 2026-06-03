@@ -145,7 +145,7 @@ patchwork
 ```
 
 ### Create Figure 5d
-```{r}
+```{r, fig.width=15, fig.height=5}
 table_S14 <- table_S14[which(table_S14$sample.id %in% table_S1$sample.id[which(table_S1$cohort.LNET=="TRUE")]), ]
 table_S14 <- table_S14[,c(1:11)]
 colnames(table_S14) <- gsub("quantiseq.", "", colnames(table_S14))
