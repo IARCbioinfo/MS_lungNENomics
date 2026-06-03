@@ -49,7 +49,7 @@ load("HC_sc.RData")
 
 table_S16 <- read.xlsx("Supplementary_Table_S16.xlsx", startRow = 3)
 
-
+data_1f <- read.csv("Data_Figure1f.csv",header=TRUE,row=1)
 ```
 
 ### Create Figure 1a
@@ -96,7 +96,7 @@ ggsurvplot(fit_OS, pval = TRUE, title="Overall survival by molecular group", leg
 ```
 
 ### Create Figure 1c
-```{r}
+```{r, fig.width=10, fig.height=3.5}
 arc4 <- c("Ca A1"="#999933", "Ca A2"="#DDCC77", "Ca B"="#117733", "sc-enriched"="#CC6677") 
 
 p1c1 <- ggplot(data=table_S8, aes(x=archetype, y = SNVB, fill=archetype)) +
@@ -190,6 +190,14 @@ ggplot(plot_df_1e, aes(x=Var1,y=Freq,fill=Var2)) +
 ```
 
 ### Create Figure 1f
+```{r, fig.width=10, fig.height=5}
+arc9 <- c("lung NETs Ca A1"="#999933", "lung NETs Ca A2"="#DDCC77", "lung NETs Ca B"="#117733", "lung NETs supra-carcinoids"="#CC6677", "LCNEC"="#882255", "SCLC"="#332288", 
+          "rectum NETs"="#33D6FF", "pancreas NETs"="#909090", "small intestine NETs"="#E5191C")
+  
+ggplot(data_1f, aes(x = UMAP1 , y = UMAP2, color = Group)) +
+  geom_point(size=2.5, alpha=0.8) + scale_colour_manual(values=arc9) +
+  xlab("UMAP dimension 1") + ylab("UMAP dimension 2") + theme_classic()
+```
 
 ### Create Figure 1g
 
