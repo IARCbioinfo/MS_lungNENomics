@@ -1,6 +1,6 @@
 ---
 title: "Figure 2"
-author: "A. Sexton-Oates"
+author: "N. Alcala, A. Sexton-Oates"
 date: "2026-05-25"
 output: html_document
 ---
@@ -201,4 +201,5 @@ ggplot(expr_data, aes(x=archetype_2, y=ICAM1_log_TPM, fill=archetype_2)) +
   guides(fill="none")
 ```
 
+### Create Figure 2d
 

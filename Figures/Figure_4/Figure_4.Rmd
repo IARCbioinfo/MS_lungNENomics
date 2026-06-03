@@ -1,6 +1,6 @@
 ---
-title: "Figure 4a bottom left and right panels"
-author: "Alexandra Sexton-Oates"
+title: "Figure 4"
+author: "A. Sexton-Oates, T. Delhomme"
 date: "2026-05-27"
 output: html_document
 ---
@@ -18,16 +18,16 @@ library(patchwork)
 ```
 
 
-### Figure 4a bottom left
+### Create Figure 4a bottom left
 
-#### Read data
+Read data
 ```{r}
 passages <- read.xlsx("Data_Figure_4a_bottom_left.xlsx")
 
 passages$sample <- factor(passages$sample, levels=c("LNET6", "LNET13", "LNET14", "LNET24", "LNET5", "LNET10", "LNET16", "LNET18"))
 ```
 
-#### Plot
+Plot
 ```{r}
 ggplot(passages, aes(x=Days, y=Passage, col=sample)) + geom_line(aes(size=sample)) + theme_classic() + 
   scale_color_manual(values=c("#9DB802", "#9DB802", "#9DB802", "#9DB802", "#025B0E", "#CC6677", "#025B0E", "#025B0E")) +
@@ -42,15 +42,14 @@ ggplot(passages, aes(x=Days, y=Passage, col=sample)) + geom_line(aes(size=sample
 
 ### Figure 4a bottom right 
 
-#### Read datasets
+Read datasets
 ```{r}
 table_S1 <- read.xlsx("Supplementary_Table_S1.xlsx", startRow = 4)
 table_S14 <- read.xlsx("Supplementary_Table_S14.xlsx", startRow = 4)
 props_small <- read.xlsx("Data_Figure_4a_bottom_right_A.xlsx")
 ```
 
-#### Format datasets
-
+Format datasets
 Central panel
 ```{r}
 props_small$sum <- rowSums(props_small[,c(2:6)])
@@ -93,7 +92,7 @@ props_full_plot$type <- factor(props_full_plot$type, levels=c("Club","Neuroendoc
 props_full_plot$group <- factor(props_full_plot$group, levels=c("lungNET", "sc-enriched", "LCNEC"))
 ```
 
-#### Plot
+Plot
 ```{r}
 p1 <- ggplot(props_full_plot[which(props_full_plot$group %in% c("lungNET", "sc-enriched")),], aes(x=group, y=proportion_adj, fill=type)) + 
   geom_bar(position="stack", stat="identity") + theme_classic() + 
@@ -114,3 +113,5 @@ p3 <- ggplot(props_full_plot[which(props_full_plot$group == "LCNEC"),], aes(x=gr
 patchwork <- p1+p2+p3 + plot_layout(widths = c(8,11.2,4))
 patchwork
 ```
+
+### Create Figure 4b

@@ -1,6 +1,6 @@
 ---
 title: "Figure 3"
-author: "Emilie Matthian, Nicolas Alcala, Alexandra Sexton-Oates"
+author: "E. Mathian, N. Alcala, A. Sexton-Oates"
 date: "20206-05-27"
 output: html_document
 ---
@@ -43,9 +43,11 @@ Table_S29 <- read.xlsx("Supplementary_Table_S29.xlsx", startRow = 3) # List of e
 Table_S29 <- Table_S29[which(Table_S29$TPM.filter.pass=="YES"), ] # keep only genes which pass TPM filter 
 ```
 
+### Create Figure 3a
 
-### Build oncoplot dataframe 
-SNV and SV in driver genes
+### Create Figure 3b
+
+Build oncoplot dataframe 
 ```{r}
 drivers <- Table_S26$gene_name[which(Table_S26$`Pass.expression.filter.(TPM>1.in.≥80%.of.cohort)`=="YES")] # drivers which pass TPM expression filter
 
@@ -75,10 +77,8 @@ rownames(oncoplot_temp) <- NULL
 oncoplot_temp <- oncoplot_temp %>% pivot_wider(names_from = gene1_name, values_from = Variant_Label)
 oncoplot_temp[is.na(oncoplot_temp)] <- "WT"
 oncoplot_temp <- as.data.frame(oncoplot_temp)
-```
 
-Gistic events
-```{r}
+# Gistic data
 dim(Table_S22) # 102 samples 
 dim(oncoplot_temp) # 35 samples 
 dim(oncoplot_temp[oncoplot_temp$sample_id %in% Table_S22$sample_id, ]) # 35 
@@ -99,24 +99,18 @@ oncoplot_temp2$amp.5p <- ifelse(oncoplot_temp2$amp.5p > 0, "CNV_event", ifelse(o
 oncoplot_temp2$amp.5q <- ifelse(oncoplot_temp2$amp.5q > 0, "CNV_event", ifelse(oncoplot_temp2$amp.5q <= 0, "WT", NA))
 oncoplot_temp2$amp.14p <- ifelse(oncoplot_temp2$amp.14p > 0, "CNV_event", ifelse(oncoplot_temp2$amp.14p <= 0, "WT", NA))
 oncoplot_temp2$amp.7p <- ifelse(oncoplot_temp2$amp.7p > 0, "CNV_event", ifelse(oncoplot_temp2$amp.7p <= 0, "WT", NA))
-```
 
-WGD status
-```{r}
+# WGD status
 all(oncoplot_temp2$sample_id %in% Table_S27$sample_id) # TRUE
 oncoplot_temp2$WGD <- sapply(oncoplot_temp2$sample_id, function(x) Table_S27$wholeGenomeDuplication[which(Table_S27$sample_id==x)])
 oncoplot_temp2$WGD <- ifelse(oncoplot_temp2$WGD=="TRUE", "WGD", "WT")
-```
 
-Shattered region status
-```{r}
+# Shattered region status
 oncoplot_temp2$shattered_regions <- sapply(oncoplot_temp2$sample_id, function(x) Table_S27$shattered_regions_presence[which(Table_S27$sample_id==x)])
 oncoplot_temp2$shattered_regions <- ifelse(oncoplot_temp2$shattered_regions=="None", "WT",
                                            ifelse(oncoplot_temp2$shattered_regions=="High-Confidence", "High confidence", "Low confidence")) 
-```
 
-SNVs/SVs in epigenetic regulatory genes other than drivers
-```{r}
+# SNVs/SVs in epigenetic regulatory genes other than drivers
 epigenetic_genes <- Table_S29$gene.name
 epigenetic_genes <- epigenetic_genes[!(epigenetic_genes %in% drivers)] # exclude ARID1A, ASXL1, ATM and MEN1 as they're already reported in oncoplot
 # leaves n = 357
@@ -136,8 +130,7 @@ samples_erg_alt <- unique(samples_erg_alt) # n = 34
 oncoplot_temp2$ERG <- sapply(oncoplot_temp2$sample_id, function(x) if(x %in% samples_erg_alt){"ERG"}else{"WT"})
 ```
 
-
-### Create Figure 3b
+Plot Figure 
 ```{r, fig.height=12, fig.height=10}
 var_cli <- Table_S1[which(Table_S1$cohort.LNET=="TRUE" & grepl("WGS", Table_S1$omics.group)),]
 var_cli <- var_cli[,c(1,13,23,25,26,46)]
@@ -198,6 +191,8 @@ p2 <- ggplot(clinplot, aes(sample_id, Feature, fill=Value)) +
   theme(axis.text.x=element_blank(),axis.ticks.x=element_blank()) + theme(legend.position = "top")
 
 # combine clinical plot and oncoplot 
-patchwork <- p2/p1 + plot_layout(heights=c(0.2,1)) + plot_annotation(tag_levels = list(c('c'))) &  theme(plot.tag = element_text(size = 20)) 
+patchwork <- p2/p1 + plot_layout(heights=c(0.2,1)) + theme(plot.tag = element_text(size = 20)) 
 patchwork
 ```
+
+### Create Figure 3c

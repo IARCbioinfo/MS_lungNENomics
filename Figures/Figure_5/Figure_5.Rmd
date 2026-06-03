@@ -1,7 +1,7 @@
 
 ---
 title: "Figure 5"
-author: "N. Alcala & A. Sexton-Oates"
+author: "N. Alcala, A. Sexton-Oates"
 date: "2026-06-02"
 output: html_document
 ---
