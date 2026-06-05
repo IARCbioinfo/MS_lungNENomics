@@ -50,6 +50,8 @@ load("HC_sc.RData")
 table_S16 <- read.xlsx("Supplementary_Table_S16.xlsx", startRow = 3)
 
 data_1f <- read.csv("Data_Figure1f.csv",header=TRUE,row=1)
+
+data_1g <- read.xlsx("Data_Figure1g.xlsx")
 ```
 
 ### Create Figure 1a
@@ -200,8 +202,44 @@ ggplot(data_1f, aes(x = UMAP1 , y = UMAP2, color = Group)) +
 ```
 
 ### Create Figure 1g
+```{r}
+# Load data required to calculate R2 values 
+#load("gene_TPM_matrix_PCA_LCNEC_SCLC_ITH_TR.RData")
+#table_S1 <- read.xlsx("Supplementary_Table_S1.xlsx", startRow = 4)
 
+# Calculate variance
+#gtv <- apply(gene_TPM_matrix[,-1],1,sd)
+#gcv <- gtv/rowMeans(gene_TPM_matrix[,-1])
 
+# Keep only variable genes
+#gene_TPM_matrix.var <- gene_TPM_matrix[which(gtv>0 & gcv>0.05),]
+
+# Retain correct samples in Table S1
+#samples2keep <- sort(intersect(table_S1$sample.id, colnames(gene_TPM_matrix.var)))
+#var_cli2 <- table_S1 %>% filter(sample.id %in% samples2keep) %>% arrange(sample.id)
+#gene_TPM_matrix.var <- gene_TPM_matrix.var[,c("gene_id",samples2keep)]
+#all(var_cli2$sample_id==colnames(gene_TPM_matrix.var)[-1]) # TRUE
+
+# Compute R2
+#R2.LS <- sapply(1:nrow(gene_TPM_matrix.var), function(i) summary(lm( log(as.numeric(gene_TPM_matrix.var[,-1][i,var_cli2$type %in% #c("LCNEC","SCLC")])+1)~var_cli2$type[var_cli2$type %in% c("LCNEC","SCLC")] ))$r.squared )
+#R2.arcs <- sapply(1:nrow(gene_TPM_matrix.var), function(i) summary(lm( #log(as.numeric(gene_TPM_matrix.var[,-1][i,var_cli2$`LNET.k.=.4.archetype` %in% c("Ca A1","Ca A2","Ca #B","sc-enriched")])+1)~var_cli2$`LNET.k.=.4.archetype`[var_cli2$`LNET.k.=.4.archetype` %in% c("Ca A1","Ca A2","Ca B","sc-enriched")] #))$r.squared )
+#R2.LNET <- sapply(1:nrow(gene_TPM_matrix.var), function(i) summary(lm( log(as.numeric(gene_TPM_matrix.var[,-1][i,var_cli2$type %in% #c("Atypical","Typical")])+1)~var_cli2$type[var_cli2$type %in% c("Atypical","Typical")] ))$r.squared )
+
+#R2.LNET_random <- sapply(1:nrow(gene_TPM_matrix.var), 
+#                        function(i) summary(lm( log(as.numeric(gene_TPM_matrix.var[,-1][i,var_cli2$type %in% #c("Atypical","Typical")])+1)~sample(var_cli2$type[var_cli2$type %in% c("Atypical","Typical")] )))$r.squared)
+#100*mean(R2.LNET_random,na.rm = "TRUE") # 0.3913002
+
+#R2.tib <- tibble(Classification=c("SCLC-LCNEC","LNET","LNET-molecular"),
+#                R2=c(mean(R2.LS,na.rm=T),mean(R2.LNET,na.rm=T),mean(R2.arcs,na.rm=T)))
+#R2.tib <- R2.tib %>% mutate(Classification = factor(Classification,levels=c("SCLC-LCNEC","LNET","LNET-molecular")))
+
+data_1g$Classification <- factor(data_1g$Classification, levels=c("SCLC-LCNEC", "LNET", "LNET-molecular"))
+
+ggplot(data_1g,aes(x=Classification,y=R2*100,fill=Classification)) + geom_bar(stat="identity") + 
+  ylab("% molecular variance explained") + theme_classic() + 
+  guides(fill="none") + coord_flip() + geom_hline(yintercept=0.3913002, linetype="dashed") + 
+  scale_fill_manual(values=c("SCLC-LCNEC"="#D6A500","LNET"="#57971B","LNET-molecular"="#CAC8AA"))
+```
 
 
 
